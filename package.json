@@ -20,8 +20,8 @@
     "node": ">= 0.4.0"
   },
   "dependencies": {
-    "canvas": ">= 0.7.0",
-    "jsdom": ">= 0.6.0"
+    "canvas": "https://github.com/kkoopa/node-canvas/tarball/v0.11",
+    "jsdom": "https://github.com/kkoopa/jsdom/tarball/master"
   },
   "devDependencies": {
     "uglify-js": "~2.3.6",
