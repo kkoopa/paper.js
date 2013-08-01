@@ -16,6 +16,7 @@ function cloneAndCompare(item) {
 		return item.parent == copy.parent;
 	}, true);
 	equals(function() {
+		// Cloned items appear above the original.
 		return item.nextSibling == copy;
 	}, true);
 	if (item.name) {
@@ -76,11 +77,9 @@ test('Layer#clone() - check activeLayer', function() {
 	var project = paper.project,
 		activeLayer = project.activeLayer,
 		layer = activeLayer.clone();
+	// The active layer should not change when cloning layers.
 	equals(function() {
-		return layer == project.activeLayer;
-	}, true);
-	equals(function() {
-		return activeLayer != project.activeLayer;
+		return activeLayer == project.activeLayer;
 	}, true);
 });
 
@@ -165,4 +164,19 @@ test('Group with clipmask', function() {
 		group = new Group([path, path2]);
 	group.clipped = true;
 	cloneAndCompare(group);
+});
+
+test('Item#clone() Hierarchy', function() {
+	var path1 = new Path.Circle([150, 150], 60);
+	var path2 = new Path.Circle([150, 150], 60);
+	var clone = path1.clone();
+	equals(function() {
+		return path2.isAbove(path1);
+	}, true);
+	equals(function() {
+		return clone.isAbove(path1);
+	}, true);
+	equals(function() {
+		return clone.isBelow(path2);
+	}, true);
 });

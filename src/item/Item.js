@@ -61,7 +61,11 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		data: {}
 	},
 
-	initialize: function Item(point) {
+	initialize: function Item() {
+		// Do nothing.
+	},
+
+	_initialize: function(props, point) {
 		// Define this Item's unique id.
 		this._id = Item._id = (Item._id || 0) + 1;
 		// If _project is already set, the item was already moved into the DOM
@@ -69,15 +73,18 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		if (!this._project) {
 			var project = paper.project,
 				layer = project.activeLayer;
-			if (layer)
+			// Do not insert into DOM if props.insert is false.
+			if (layer && !(props && props.insert === false)) {
 				layer.addChild(this);
-			else
+			} else {
 				this._setProject(project);
+			}
 		}
 		this._style = new Style(this._project._currentStyle, this);
 		this._matrix = new Matrix();
 		if (point)
 			this._matrix.translate(point);
+		return props ? this._set(props, { insert: true }) : true;
 	},
 
 	_events: new function() {
@@ -183,17 +190,20 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @param {ChangeFlag} flags describes what exactly has changed.
 	 */
 	_changed: function(flags) {
+		var parent = this._parent,
+			project = this._project,
+			symbol = this._parentSymbol;
 		if (flags & /*#=*/ ChangeFlag.GEOMETRY) {
 			// Clear cached bounds and position whenever geometry changes
 			delete this._bounds;
 			delete this._position;
 		}
-		if (this._parent
-				&& (flags & (/*#=*/ ChangeFlag.GEOMETRY | /*#=*/ ChangeFlag.STROKE))) {
+		if (parent && (flags
+				& (/*#=*/ ChangeFlag.GEOMETRY | /*#=*/ ChangeFlag.STROKE))) {
 			// Clear cached bounds of all items that this item contributes to.
 			// We call this on the parent, since the information is cached on
 			// the parent, see getBounds().
-			this._parent._clearBoundsCache();
+			parent._clearBoundsCache();
 		}
 		if (flags & /*#=*/ ChangeFlag.HIERARCHY) {
 			// Clear cached bounds of all items that this item contributes to.
@@ -202,25 +212,27 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			// HIERARCHY notifications go)
 			this._clearBoundsCache();
 		}
-		if (flags & /*#=*/ ChangeFlag.APPEARANCE) {
-			this._project._needsRedraw = true;
-		}
-		// If this item is a symbol's definition, notify it of the change too
-		if (this._parentSymbol)
-			this._parentSymbol._changed(flags);
-		// Have project keep track of changed items, so they can be iterated.
-		// This can be used for example to update the SVG tree. Needs to be
-		// activated in Project
-		if (this._project._changes) {
-			var entry = this._project._changesById[this._id];
-			if (entry) {
-				entry.flags |= flags;
-			} else {
-				entry = { item: this, flags: flags };
-				this._project._changesById[this._id] = entry;
-				this._project._changes.push(entry);
+		if (project) {
+			if (flags & /*#=*/ ChangeFlag.APPEARANCE) {
+				project._needsRedraw = true;
+			}
+			// Have project keep track of changed items so they can be iterated.
+			// This can be used for example to update the SVG tree. Needs to be
+			// activated in Project
+			if (project._changes) {
+				var entry = project._changesById[this._id];
+				if (entry) {
+					entry.flags |= flags;
+				} else {
+					entry = { item: this, flags: flags };
+					project._changesById[this._id] = entry;
+					project._changes.push(entry);
+				}
 			}
 		}
+		// If this item is a symbol's definition, notify it of the change too
+		if (symbol)
+			symbol._changed(flags);
 	},
 
 	/**
@@ -449,13 +461,19 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	_visible: true,
 
 	/**
-	 * The blend mode of the item.
+	 * The blend mode with which the item is composited onto the canvas. Both
+	 * the standard canvas compositing modes, as well as the new CSS blend modes
+	 * are supported. If blend-modes cannot be rendered natively, they are
+	 * emulated. Be aware that emulation can have an impact on performance.
 	 *
 	 * @name Item#blendMode
 	 * @type String('normal', 'multiply', 'screen', 'overlay', 'soft-light',
 	 * 'hard-light', 'color-dodge', 'color-burn', 'darken', 'lighten',
 	 * 'difference', 'exclusion', 'hue', 'saturation', 'luminosity', 'color',
-	 * 'add', 'subtract', 'average', 'pin-light', 'negation')
+	 * 'add', 'subtract', 'average', 'pin-light', 'negation', 'source-over',
+	 * 'source-in', 'source-out', 'source-atop', 'destination-over',
+	 * 'destination-in', 'destination-out', 'destination-atop', 'lighter',
+	 * 'darker', 'copy', 'xor')
 	 * @default 'normal'
 	 *
 	 * @example {@paperscript}
@@ -1170,6 +1188,9 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * Clones the item within the same project and places the copy above the
 	 * item.
 	 *
+	 * @param {Boolean} [insert=true] specifies wether the copy should be
+	 * inserted into the DOM. When set to {@code true}, it is inserted above the
+	 * original.
 	 * @return {Item} the newly cloned item
 	 *
 	 * @example {@paperscript}
@@ -1188,11 +1209,11 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * 	copy.position.x += i * copy.bounds.width;
 	 * }
 	 */
-	clone: function() {
-		return this._clone(new this.constructor());
+	clone: function(insert) {
+		return this._clone(new this.constructor({ insert: false }), insert);
 	},
 
-	_clone: function(copy) {
+	_clone: function(copy, insert) {
 		// Copy over style
 		copy.setStyle(this._style);
 		// If this item has children, clone and append each of them:
@@ -1200,8 +1221,11 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			// Clone all children and add them to the copy. tell #addChild we're
 			// cloning, as needed by CompoundPath#insertChild().
 			for (var i = 0, l = this._children.length; i < l; i++)
-				copy.addChild(this._children[i].clone(), true);
+				copy.addChild(this._children[i].clone(false), true);
 		}
+		// Insert is true by default.
+		if (insert || insert === undefined)
+			copy.insertAbove(this);
 		// Only copy over these fields if they are actually defined in 'this'
 		// TODO: Consider moving this to Base once it's useful in more than one
 		// place
@@ -1443,7 +1467,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			for (var i = this._children.length - 1, res; i >= 0; i--)
 				if (res = this._children[i].hitTest(point, options))
 					return res;
-		} else if (this.hasFill() && this._contains(point)) {
+		} else if (options.fill && this.hasFill() && this._contains(point)) {
 			return new HitResult('fill', this);
 		}
 	},
@@ -1497,7 +1521,9 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * its children list. You can use this function for groups, compound
 	 * paths and layers.
 	 *
-	 * @param {Item} item The item to be added as a child
+	 * @param {Item} item the item to be added as a child
+	 * @return {Item} the added item, or {@code null} if adding was not
+	 * possible.
 	 */
 	addChild: function(item, _preserve) {
 		return this.insertChild(undefined, item, _preserve);
@@ -1509,7 +1535,9 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * groups, compound paths and layers.
 	 *
 	 * @param {Number} index
-	 * @param {Item} item The item to be appended as a child
+	 * @param {Item} item the item to be inserted as a child
+	 * @return {Item} the inserted item, or {@code null} if inserting was not
+	 * possible.
 	 */
 	insertChild: function(index, item, _preserve) {
 		var res = this.insertChildren(index, [item], _preserve);
@@ -1522,6 +1550,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * paths and layers.
 	 *
 	 * @param {Item[]} items The items to be added as children
+	 * @return {Item[]} the added items, or {@code null} if adding was not
+	 * possible.
 	 */
 	addChildren: function(items, _preserve) {
 		return this.insertChildren(this._children.length, items, _preserve);
@@ -1534,6 +1564,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 *
 	 * @param {Number} index
 	 * @param {Item[]} items The items to be appended as children
+	 * @return {Item[]} the inserted items, or {@code null} if inserted was not
+	 * possible.
 	 */
 	insertChildren: function(index, items, _preserve, _type) {
 		// CompoundPath#insertChildren() requires _preserve and _type:
@@ -1573,31 +1605,39 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		return items;
 	},
 
+	// Private helper for #insertAbove() / #insertBelow()
+	_insert: function(above, item, _preserve) {
+		if (!item._parent)
+			return null;
+		var index = item._index + (above ? 1 : 0);
+		// If the item is removed and inserted it again further above,
+		// the index needs to be adjusted accordingly.
+		if (item._parent === this._parent && index > this._index)
+			 index--;
+		return item._parent.insertChild(index, this, _preserve);
+	},
+
 	/**
 	 * Inserts this item above the specified item.
 	 *
-	 * @param {Item} item The item above which it should be inserted
-	 * @return {Boolean} {@true it was inserted}
+	 * @param {Item} item the item above which it should be inserted
+	 * @return {Item} the inserted item, or {@code null} if inserting was not
+	 * possible.
 	 */
 	insertAbove: function(item, _preserve) {
-		var index = item._index;
-		if (item._parent == this._parent && index < this._index)
-			 index++;
-		return item._parent.insertChild(index, this, _preserve);
+		return this._insert(true, item, _preserve);
 	},
 
 	/**
 	 * Inserts this item below the specified item.
 	 *
-	 * @param {Item} item The item above which it should be inserted
-	 * @return {Boolean} {@true it was inserted}
+	 * @param {Item} item the item above which it should be inserted
+	 * @return {Item} the inserted item, or {@code null} if inserting was not
+	 * possible.
 	 */
 	insertBelow: function(item, _preserve) {
-		var index = item._index;
-		if (item._parent == this._parent && index > this._index)
-			 index--;
-		return item._parent.insertChild(index, this, _preserve);
-	},
+	 	return this._insert(false, item, _preserve);
+	 },
 
 	/**
 	 * Sends this item to the back of all other items within the same parent.
@@ -1825,7 +1865,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @return {Boolean} {@true if it is above the specified item}
 	 */
 	isAbove: function(item) {
-		return this._getOrder(item) == -1;
+		return this._getOrder(item) === -1;
 	},
 
 	/**
@@ -1836,7 +1876,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @return {Boolean} {@true if it is below the specified item}
 	 */
 	isBelow: function(item) {
-		return this._getOrder(item) == 1;
+		return this._getOrder(item) === 1;
 	},
 
 	/**
@@ -1846,7 +1886,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @return {Boolean} {@true if it is the parent of the item}
 	 */
 	isParent: function(item) {
-		return this._parent == item;
+		return this._parent === item;
 	},
 
 	/**
@@ -1856,7 +1896,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @return {Boolean} {@true it is a child of the item}
 	 */
 	isChild: function(item) {
-		return item && item._parent == this;
+		return item && item._parent === this;
 	},
 
 	/**
@@ -2881,8 +2921,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			limit = style.getMiterLimit(),
 			fillColor = style.getFillColor(),
 			strokeColor = style.getStrokeColor(),
-			dashArray = style.getDashArray(),
-			dashOffset = style.getDashOffset();
+			shadowColor = style.getShadowColor();
 		if (width != null)
 			ctx.lineWidth = width;
 		if (join)
@@ -2895,6 +2934,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			ctx.fillStyle = fillColor.toCanvasStyle(ctx);
 		if (strokeColor) {
 			ctx.strokeStyle = strokeColor.toCanvasStyle(ctx);
+			var dashArray = style.getDashArray(),
+				dashOffset = style.getDashOffset();
 			if (paper.support.nativeDash && dashArray && dashArray.length) {
 				if ('setLineDash' in ctx) {
 					ctx.setLineDash(dashArray);
@@ -2905,13 +2946,20 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 				}
 			}
 		}
+		if (shadowColor) {
+			ctx.shadowColor = shadowColor.toCanvasStyle(ctx);
+			ctx.shadowBlur = style.getShadowBlur();
+			var offset = this.getShadowOffset();
+			ctx.shadowOffsetX = offset.x;
+			ctx.shadowOffsetY = offset.y;
+		}
 	},
 
 	// TODO: Implement View into the drawing.
 	// TODO: Optimize temporary canvas drawing to ignore parts that are
 	// outside of the visible view.
 	draw: function(ctx, param) {
-		if (!this._visible || this._opacity == 0)
+		if (!this._visible || this._opacity === 0)
 			return;
 		// Each time the project gets drawn, it's _drawCount is increased.
 		// Keep the _drawCount of drawn items in sync, so we have an easy
@@ -2934,12 +2982,14 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// opacity by themselves (they also don't call _setStyles)
 		var blendMode = this._blendMode,
 			opacity = this._opacity,
+			normalBlend = blendMode === 'normal',
 			nativeBlend = BlendMode.nativeModes[blendMode],
 			// Determine if we can draw directly, or if we need to draw into a
 			// separate canvas and then composite onto the main canvas.
-			direct = blendMode === 'normal' && opacity === 1
+			direct = normalBlend && opacity === 1
 					// If native blending is possible, see if the item allows it
-					|| (nativeBlend || opacity < 1) && this._canComposite(),
+					|| (nativeBlend || normalBlend && opacity < 1)
+						&& this._canComposite(),
 			mainCtx, itemOffset, prevOffset;
 		if (!direct) {
 			// Apply the paren't global matrix to the calculation of correct
