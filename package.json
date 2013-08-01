@@ -20,7 +20,7 @@
     "node": ">= 0.4.0"
   },
   "dependencies": {
-    "canvas": "git://github.com/kkoopa/node-canvas.git#new_png",
+    "canvas": "~1.1.0",
     "jsdom": "git://github.com/kkoopa/jsdom.git"
   },
   "devDependencies": {
