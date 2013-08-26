@@ -20,7 +20,7 @@
     "node": ">= 0.4.0"
   },
   "dependencies": {
-    "canvas": "~1.1.0",
+    "canvas": "git://github.com/kkoopa/node-canvas.git#memleaks",
     "jsdom": "git://github.com/kkoopa/jsdom.git"
   },
   "devDependencies": {
