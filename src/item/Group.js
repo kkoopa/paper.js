@@ -72,8 +72,8 @@ var Group = Item.extend(/** @lends Group# */{
 	 * Creates a new Group item and places it at the top of the active layer.
 	 *
 	 * @name Group#initialize
-	 * @param {Object} object An object literal containing properties to be
-	 * set on the Group.
+	 * @param {Object} object an object literal containing the properties to be
+	 * set on the group.
 	 *
 	 * @example {@paperscript}
 	 * var path = new Path([100, 100], [100, 200]);
@@ -122,24 +122,6 @@ var Group = Item.extend(/** @lends Group# */{
 		// Make sure we're setting _clipItem to null so it won't be searched for
 		// nex time.
 		return this._clipItem = null;
-	},
-
-	/**
-	 * Specifies whether the group applies transformations directly to its
-	 * children, or wether they are to be stored in its {@link Item#matrix}
-	 *
-	 * @type Boolean
-	 * @default true
-	 * @bean
-	 */
-	getTransformContent: function() {
-		return this._transformContent;
-	},
-
-	setTransformContent: function(transform) {
-		this._transformContent = transform;
-		if (transform)
-			this.applyMatrix();
 	},
 
 	/**

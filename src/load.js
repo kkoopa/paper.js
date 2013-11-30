@@ -13,8 +13,7 @@
 // This file uses PrePro to preprocess the paper.js source code on the fly in
 // the browser, avoiding the step of having to manually preprocess it after each
 // change. This is very useful during development of the library itself.
-
-if (typeof window !== 'undefined') {
+if (typeof window === 'object') {
 	// Browser based loading through PrePro:
 	if (!window.include) {
 		var scripts = document.getElementsByTagName('script');
@@ -43,8 +42,7 @@ if (typeof window !== 'undefined') {
 	prepro.include('../src/options.js');
 	// Override node specific options.
 	prepro.setOptions({
-		browser: false,
-		node: true,
+		environment: 'node',
 		stats: false
 	});
 	// Load Paper.js library files.

@@ -30,7 +30,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		 */
 		extend: function extend(src) {
 			if (src._serializeFields)
-				src._serializeFields = Base.merge(
+				src._serializeFields = new Base(
 						this.prototype._serializeFields, src._serializeFields);
 			var res = extend.base.apply(this, arguments),
 				proto = res.prototype,
@@ -57,12 +57,13 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		blendMode: 'normal',
 		opacity: 1,
 		guide: false,
+		selected: false,
 		clipMask: false,
 		data: {}
 	},
 
 	initialize: function Item() {
-		// Do nothing.
+		// Do nothing, but declare it for named constructors.
 	},
 
 	_initialize: function(props, point) {
@@ -71,19 +72,21 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// If _project is already set, the item was already moved into the DOM
 		// hierarchy. Used by Layer, where it's added to project.layers instead
 		if (!this._project) {
-			var project = paper.project,
-				layer = project.activeLayer;
+			var project = paper.project;
 			// Do not insert into DOM if props.insert is false.
-			if (layer && !(props && props.insert === false)) {
-				layer.addChild(this);
-			} else {
+			if (props && props.insert === false) {
 				this._setProject(project);
+			} else {
+				// Create a new layer if there is no active one. This will
+				// automatically make it the new activeLayer.
+				(project.activeLayer || new Layer()).addChild(this);
 			}
 		}
 		this._style = new Style(this._project._currentStyle, this);
-		this._matrix = new Matrix();
+		var matrix = this._matrix = new Matrix();
 		if (point)
-			this._matrix.translate(point);
+			matrix.translate(point);
+		matrix._owner = this;
 		return props ? this._set(props, { insert: true }) : true;
 	},
 
@@ -144,10 +147,10 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			}, {
 				onFrame: {
 					install: function() {
-						this._project.view._animateItem(this, true);
+						this._animateItem(true);
 					},
 					uninstall: function() {
-						this._project.view._animateItem(this, false);
+						this._animateItem(false);
 					}
 				},
 
@@ -157,6 +160,10 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		);
 	},
 
+	_animateItem: function(animate) {
+		this._project.view._animateItem(this, animate);
+	},
+
 	_serialize: function(options, dictionary) {
 		var props = {},
 			that = this;
@@ -164,10 +171,14 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		function serialize(fields) {
 			for (var key in fields) {
 				var value = that[key];
-				if (!Base.equals(value, fields[key]))
+				// Style#leading is a special case, as its default value is
+				// dependent on the fontSize. Handle this here separately.
+				if (!Base.equals(value, key === 'leading'
+						? fields.fontSize * 1.2 : fields[key])) {
 					props[key] = Base.serialize(value, options,
 							// Do not use compact mode for data
 							key !== 'data', dictionary);
+				}
 			}
 		}
 
@@ -193,6 +204,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		var parent = this._parent,
 			project = this._project,
 			symbol = this._parentSymbol;
+		// Reset _drawCount on each change.
+		this._drawCount = null;
 		if (flags & /*#=*/ ChangeFlag.GEOMETRY) {
 			// Clear cached bounds and position whenever geometry changes
 			delete this._bounds;
@@ -318,7 +331,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// If the item already had a name, remove the reference to it from the
 		// parent's children object:
 		if (this._name)
-			this._removeFromNamed();
+			this._removeNamed();
+		// See if the name is a simple number, which we cannot support due to
+		// the named lookup on the children array.
+		if (name === (+name) + '')
+			throw new Error(
+					'Names consisting only of numbers are not supported.');
 		if (name && this._parent) {
 			var children = this._parent._children,
 				namedChildren = this._parent._namedChildren,
@@ -400,13 +418,19 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		this.getStyle().set(style);
 	},
 
+	// DOCS: Item#hasFill()
 	hasFill: function() {
-		return !!this.getStyle().getFillColor();
+		return this.getStyle().hasFill();
 	},
 
+	// DOCS: Item#hasStroke()
 	hasStroke: function() {
-		var style = this.getStyle();
-		return !!style.getStrokeColor() && style.getStrokeWidth() > 0;
+		return this.getStyle().hasStroke();
+	},
+
+	// DOCS: Item#hasShadow()
+	hasShadow: function() {
+		return this.getStyle().hasShadow();
 	}
 }, Base.each(['locked', 'visible', 'blendMode', 'opacity', 'guide'],
 	// Produce getter/setters for properties. We need setters because we want to
@@ -746,35 +770,6 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// translate the item. Pass true for dontLink, as we do not need a
 		// LinkedPoint to simply calculate this distance.
 		this.translate(Point.read(arguments).subtract(this.getPosition(true)));
-	},
-
-	/**
-	 * The item's transformation matrix, defining position and dimensions in the
-	 * document.
-	 *
-	 * @type Matrix
-	 * @bean
-	 */
-	getMatrix: function() {
-		return this._matrix;
-	},
-
-	setMatrix: function(matrix) {
-		// Use Matrix#initialize to easily copy over values.
-		this._matrix.initialize(matrix);
-		this._changed(/*#=*/ Change.GEOMETRY);
-	},
-
-	/**
-	 * Specifies wether the item has any content or not. The meaning of what
-	 * content is differs from type to type. For example, a {@link Group} with
-	 * no children, a {@link TextItem} with no text content and a {@link Path}
-	 * with no segments all are considered empty.
-	 *
-	 * @type Boolean
-	 */
-	isEmpty: function() {
-		return !this._children || this._children.length == 0;
 	}
 }, Base.each(['getBounds', 'getStrokeBounds', 'getHandleBounds', 'getRoughBounds'],
 	function(name) {
@@ -966,6 +961,57 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 */
 }), /** @lends Item# */{
 	/**
+	 * The item's transformation matrix, defining position and dimensions in
+	 * relation to its parent item in which it is contained.
+	 *
+	 * @type Matrix
+	 * @bean
+	 */
+	getMatrix: function() {
+		return this._matrix;
+	},
+
+	setMatrix: function(matrix) {
+		// Use Matrix#initialize to easily copy over values.
+		this._matrix.initialize(matrix);
+		if (this._transformContent)
+			this.applyMatrix(true);
+		this._changed(/*#=*/ Change.GEOMETRY);
+	},
+
+	/**
+	 * The item's global transformation matrix in relation to the global project
+	 * coordinate space.
+	 *
+	 * @type Matrix
+	 * @bean
+	 */
+	getGlobalMatrix: function() {
+		// TODO: if drawCount is out of sync, we still need to walk up the chain
+		// and concatenate the matrices.
+		return this._drawCount === this._project._drawCount
+				&& this._globalMatrix || null;
+	},
+
+	/**
+	 * Specifies whether the group applies transformations directly to its
+	 * children, or whether they are to be stored in its {@link Item#matrix}
+	 *
+	 * @type Boolean
+	 * @default true
+	 * @bean
+	 */
+	getTransformContent: function() {
+		return this._transformContent;
+	},
+
+	setTransformContent: function(transform) {
+		this._transformContent = transform;
+		if (transform)
+			this.applyMatrix();
+	},
+
+	/**
 	 * {@grouptitle Project Hierarchy}
 	 * The project that this item belongs to.
 	 *
@@ -978,7 +1024,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 
 	_setProject: function(project) {
 		if (this._project != project) {
+			var hasOnFrame = this.responds('frame');
+			if (hasOnFrame)
+				this._animateItem(false);
 			this._project = project;
+			if (hasOnFrame)
+				this._animateItem(true);
 			if (this._children) {
 				for (var i = 0, l = this._children.length; i < l; i++) {
 					this._children[i]._setProject(project);
@@ -1184,11 +1235,35 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		return this._parent ? this._parent.isInserted() : false;
 	},
 
+	equals: function(item) {
+		// Note: We do not compare name and selected state.
+		return item === this || item && this._class === item._class
+				&& this._style.equals(item._style) 
+				&& this._matrix.equals(item._matrix)
+				&& this._locked === item._locked
+				&& this._visible === item._visible
+				&& this._blendMode === item._blendMode
+				&& this._opacity === item._opacity
+				&& this._clipMask === item._clipMask
+				&& this._guide === item._guide
+				&& this._equals(item)
+				|| false;
+	},
+
+	/**
+	 * A private helper for #equals(), to be overridden in sub-classes. When it
+	 * is called, item is always defined, of the same class as `this` and has
+	 * equal general state attributes such as matrix, style, opacity, etc.
+	 */
+	_equals: function(item) {
+		return Base.equals(this._children, item._children);
+	},
+
 	/**
 	 * Clones the item within the same project and places the copy above the
 	 * item.
 	 *
-	 * @param {Boolean} [insert=true] specifies wether the copy should be
+	 * @param {Boolean} [insert=true] specifies whether the copy should be
 	 * inserted into the DOM. When set to {@code true}, it is inserted above the
 	 * original.
 	 * @return {Item} the newly cloned item
@@ -1226,9 +1301,9 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// Insert is true by default.
 		if (insert || insert === undefined)
 			copy.insertAbove(this);
-		// Only copy over these fields if they are actually defined in 'this'
-		// TODO: Consider moving this to Base once it's useful in more than one
-		// place
+		// Only copy over these fields if they are actually defined in 'this',
+		// meaning the default value has been overwritten (default is on
+		// prototype).
 		var keys = ['_locked', '_visible', '_blendMode', '_opacity',
 				'_clipMask', '_guide'];
 		for (var i = 0, l = keys.length; i < l; i++) {
@@ -1238,6 +1313,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		}
 		// Use Matrix#initialize to easily copy over values.
 		copy._matrix.initialize(this._matrix);
+		// Copy over _data as well.
+		copy._data = this._data ? Base.clone(this._data) : null;
 		// Copy over the selection state, use setSelected so the item
 		// is also added to Project#selectedItems if it is selected.
 		copy.setSelected(this._selected);
@@ -1258,13 +1335,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @return {Item} the new copy of the item
 	 */
 	copyTo: function(itemOrProject) {
-		var copy = this.clone();
-		if (itemOrProject.layers) {
-			itemOrProject.activeLayer.addChild(copy);
-		} else {
-			itemOrProject.addChild(copy);
-		}
-		return copy;
+		// Pass false fo insert, since we're inserting at a specific location.
+		return itemOrProject.addChild(this.clone(false));
 	},
 
 	/**
@@ -1305,18 +1377,22 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			matrix = new Matrix().scale(scale).translate(topLeft.negate());
 		ctx.save();
 		matrix.applyToContext(ctx);
-		// See Project#draw() for an explanation of Base.merge()
-		this.draw(ctx, Base.merge({ transforms: [matrix] }));
-		var raster = new Raster(canvas);
-		raster.setPosition(topLeft.add(size.divide(2)));
+		// See Project#draw() for an explanation of new Base()
+		this.draw(ctx, new Base({ transforms: [matrix] }));
 		ctx.restore();
+		var raster = new Raster({
+			canvas: canvas,
+			insert: false
+		});
+		raster.setPosition(topLeft.add(size.divide(2)));
+		raster.insertAbove(this);
 		// NOTE: We don't need to release the canvas since it now belongs to the
 		// Raster!
 		return raster;
 	},
 
 	/**
-	 * Checks wether the item's geometry contains the given point.
+	 * Checks whether the item's geometry contains the given point.
 	 * 
 	 * @example {@paperscript} // Click within and outside the star below
 	 * // Create a star shaped path:
@@ -1369,36 +1445,37 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * Perform a hit test on the item (and its children, if it is a
 	 * {@link Group} or {@link Layer}) at the location of the specified point.
 	 * 
-	 * The optional options object allows you to control the specifics of the
-	 * hit test and may contain a combination of the following values:
-	 * <b>tolerance:</b> {@code Number} - The tolerance of the hit test in
-	 * points.
+	 * The options object allows you to control the specifics of the hit test
+	 * and may contain a combination of the following values:
+	 * <b>options.tolerance:</b> {@code Number} – the tolerance of the hit test
+	 * in points. Can also be controlled through
+	 * {@link Project#options}{@code .hitTolerance}.
 	 * <b>options.type:</b> Only hit test again a certain item
 	 * type: {@link PathItem}, {@link Raster}, {@link TextItem}, etc.
-	 * <b>options.fill:</b> {@code Boolean} - Hit test the fill of items.
-	 * <b>options.stroke:</b> {@code Boolean} - Hit test the curves of path
+	 * <b>options.fill:</b> {@code Boolean} – hit test the fill of items.
+	 * <b>options.stroke:</b> {@code Boolean} – hit test the curves of path
 	 * items, taking into account stroke width.
-	 * <b>options.segment:</b> {@code Boolean} - Hit test for
+	 * <b>options.segment:</b> {@code Boolean} – hit test for
 	 * {@link Segment#point} of {@link Path} items.
-	 * <b>options.handles:</b> {@code Boolean} - Hit test for the handles
+	 * <b>options.handles:</b> {@code Boolean} – hit test for the handles
 	 * ({@link Segment#handleIn} / {@link Segment#handleOut}) of path segments.
-	 * <b>options.ends:</b> {@code Boolean} - Only hit test for the first or
+	 * <b>options.ends:</b> {@code Boolean} – only hit test for the first or
 	 * last segment points of open path items.
-	 * <b>options.bounds:</b> {@code Boolean} - Hit test the corners and
+	 * <b>options.bounds:</b> {@code Boolean} – hit test the corners and
 	 * side-centers of the bounding rectangle of items ({@link Item#bounds}).
-	 * <b>options.center:</b> {@code Boolean} - Hit test the
+	 * <b>options.center:</b> {@code Boolean} – hit test the
 	 * {@link Rectangle#center} of the bounding rectangle of items
 	 * ({@link Item#bounds}).
-	 * <b>options.guides:</b> {@code Boolean} - Hit test items that have
+	 * <b>options.guides:</b> {@code Boolean} – hit test items that have
 	 * {@link Item#guide} set to {@code true}.
-	 * <b>options.selected:</b> {@code Boolean} - Only hit selected items.
+	 * <b>options.selected:</b> {@code Boolean} – only hit selected items.<b
 	 *
 	 * @param {Point} point The point where the hit test should be performed
 	 * @param {Object} [options={ fill: true, stroke: true, segments: true,
 	 * tolerance: 2 }]
-	 * @return {HitResult} A hit result object that contains more
+	 * @return {HitResult} a hit result object that contains more
 	 * information about what exactly was hit or {@code null} if nothing was
-	 * hit.
+	 * hit
 	 */
 	hitTest: function(point, options) {
 		point = Point.read(arguments);
@@ -1411,7 +1488,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// this item does not have children, since we'd have to travel up the
 		// chain already to determine the rough bounds.
 		if (!this._children && !this.getRoughBounds()
-				.expand(options.tolerance)._containsPoint(point))
+				.expand(2 * options.tolerance)._containsPoint(point))
 			return null;
 		// Transform point to local coordinates but use untransformed point
 		// for bounds check above.
@@ -1462,21 +1539,100 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	},
 
 	_hitTest: function(point, options) {
-		if (this._children) {
+		var children = this._children;
+		if (children) {
 			// Loop backwards, so items that get drawn last are tested first
-			for (var i = this._children.length - 1, res; i >= 0; i--)
-				if (res = this._children[i].hitTest(point, options))
+			for (var i = children.length - 1, res; i >= 0; i--)
+				if (res = children[i].hitTest(point, options))
 					return res;
 		} else if (options.fill && this.hasFill() && this._contains(point)) {
 			return new HitResult('fill', this);
 		}
 	},
 
+	// DOCS: Item#matches
+	matches: function(match) {
+		// matchObject() is used to match against objects in a nested manner.
+		// This is useful for matching against Item#data.
+		function matchObject(obj1, obj2) {
+			for (var i in obj1) {
+				if (obj1.hasOwnProperty(i)) {
+					var val1 = obj1[i],
+						val2 = obj2[i];
+					if (Base.isPlainObject(val1) && Base.isPlainObject(val2)) {
+						if (!matchObject(val1, val2))
+							return false;
+					} else if (!Base.equals(val1, val2)) {
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+		for (var key in match) {
+			if (match.hasOwnProperty(key)) {
+				var value = this[key],
+					compare = match[key];
+				if (compare instanceof RegExp) {
+					if (!compare.test(value))
+						return false;
+				} else if (typeof compare === 'function') {
+					if (!compare(value))
+						return false;
+				} else if (Base.isPlainObject(compare)) {
+					if (!matchObject(compare, value))
+						return false;
+				} else if (!Base.equals(value, compare)) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+}, new function() {
+	function getItems(item, match, list) {
+		var children = item._children,
+			items = list && [];
+		for (var i = 0, l = children && children.length; i < l; i++) {
+			var child = children[i];
+			if (child.matches(match)) {
+				if (list) {
+					items.push(child);
+				} else {
+					return child;
+				}
+			}
+			var res = getItems(child, match, list);
+			if (list) {
+				items.push.apply(items, res);
+			} else if (res) {
+				return res;
+			}
+		}
+		return list ? items : null;
+	}
+
+	return /** @lends Item# */{
+		// DOCS: Item#getItems
+		getItems: function(match) {
+			return getItems(this, match, true);
+		},
+
+		// DOCS: Item#getItem
+		getItem: function(match) {
+			return getItems(this, match, false);
+		}
+	};
+}, /** @lends Item# */{
 	/**
-	 * {@grouptitle Import / Export to JSON & SVG}
+	 * {@grouptitle Importing / Exporting JSON and SVG}
 	 *
 	 * Exports (serializes) the item with its content and child items to a JSON
 	 * data string.
+	 *
+	 * The options object offers control over some aspects of the SVG export:
+	 * <b>options.precision:</b> {@code Number} – the amount of fractional
+	 * digits in numbers used in JSON data.
 	 *
 	 * @name Item#exportJSON
 	 * @function
@@ -1485,33 +1641,57 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 */
 
 	/**
-	 * Imports (deserializes) the stored JSON data into this item's
-	 * {@link Item#children} list. Note that the item is not cleared first.
-	 * You can call {@link Item#removeChildren()} to do so.
+	 * Imports (deserializes) the stored JSON data into this item. If the data
+	 * describes an item of the same class or a parent class of the item, the
+	 * data is imported into the item itself. If not, the imported item is added
+	 * to this item's {@link Item#children} list. Note that not all type of
+	 * items can have children.
 	 *
 	 * @param {String} json the JSON data to import from.
 	 */
 	importJSON: function(json) {
-		return this.addChild(Base.importJSON(json));
+		// Try importing into `this`. If another item is returned, try adding
+		// it as a child (this won't be successful on some classes, returning
+		// null).
+		var res = Base.importJSON(json, this);
+		return res !== this
+				? this.addChild(res)
+				: res;
 	},
 
 	/**
 	 * Exports the item with its content and child items as an SVG DOM.
 	 *
+	 * The options object offers control over some aspects of the SVG export:
+	 * <b>options.asString:</b> {@code Boolean} – wether a SVG node or a String
+	 * is to be returned.
+	 * <b>options.precision:</b> {@code Number} – the amount of fractional
+	 * digits in numbers used in SVG data.
+	 * <b>options.matchShapes:</b> {@code Boolean} – wether imported path
+	 * items should tried to be converted to shape items, if their geometries
+	 * match.
+	 *
 	 * @name Item#exportSVG
 	 * @function
-	 * @param {Object} [options={ asString: false, precision: 5 }] the export
-	 *        options.
+	 * @param {Object} [options={ asString: false, precision: 5,
+	 * matchShapes: false }] the export options.
 	 * @return {SVGSVGElement} the item converted to an SVG node
 	 */
 
 	/**
-	 * Converts the SVG node and all its child nodes into Paper.js items and
-	 * adds them as children to the this item.
+	 * Converts the provided SVG content into Paper.js items and adds them to
+	 * the this item's children list.
+	 * Note that the item is not cleared first. You can call
+	 * {@link Item#removeChildren()} to do so.
+	 *
+	 * The options object offers control over some aspects of the SVG import:
+	 * <b>options.expandShapes:</b> {@code Boolean} – wether imported shape
+	 * items should be expanded to path items.
 	 *
 	 * @name Item#importSVG
 	 * @function
-	 * @param {SVGSVGElement} node the SVG node to import
+	 * @param {SVGSVGElement|String} svg the SVG content to import
+	 * @param {Object} [options={ expandShapes: false }] the import options
 	 * @return {Item} the imported Paper.js parent item
 	 */
 
@@ -1694,9 +1874,27 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	moveBelow: '#insertBelow',
 
 	/**
+	 * If this is a group, layer or compound-path with only one child-item,
+	 * the child-item is moved outside and the parent is erased. Otherwise, the
+	 * item itself is returned unmodified.
+	 *
+	 * @return {Item} the reduced item
+	 */
+	reduce: function() {
+		if (this._children && this._children.length === 1) {
+			var child = this._children[0];
+			child.insertAbove(this);
+			child.setStyle(this._style);
+			this.remove();
+			return child;
+		}
+		return this;
+	},
+
+	/**
 	* Removes the item from its parent's named children list.
 	*/
-	_removeFromNamed: function() {
+	_removeNamed: function() {
 		var children = this._parent._children,
 			namedChildren = this._parent._namedChildren,
 			name = this._name,
@@ -1725,9 +1923,11 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	_remove: function(notify) {
 		if (this._parent) {
 			if (this._name)
-				this._removeFromNamed();
+				this._removeNamed();
 			if (this._index != null)
 				Base.splice(this._parent._children, null, this._index, 1);
+			if (this.responds('frame'))
+				this._animateItem(false);
 			// Notify parent of changed hierarchy
 			if (notify)
 				this._parent._changed(/*#=*/ Change.HIERARCHY);
@@ -1751,6 +1951,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * Removes all of the item's {@link #children} (if any).
 	 *
 	 * @name Item#removeChildren
+	 * @alias Item#clear
 	 * @function
 	 * @return {Item[]} an array containing the removed items
 	 */
@@ -1780,6 +1981,9 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		return removed;
 	},
 
+	// DOCS Item#clear()
+	clear: '#removeChildren',
+
 	/**
 	 * Reverses the order of the item's children
 	 */
@@ -1797,6 +2001,18 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	// locking an item currently has no effect
 	/**
 	 * {@grouptitle Tests}
+	 * Specifies whether the item has any content or not. The meaning of what
+	 * content is differs from type to type. For example, a {@link Group} with
+	 * no children, a {@link TextItem} with no text content and a {@link Path}
+	 * with no segments all are considered empty.
+	 *
+	 * @return Boolean
+	 */
+	isEmpty: function() {
+		return !this._children || this._children.length == 0;
+	},
+
+	/**
 	 * Checks whether the item is editable.
 	 *
 	 * @return {Boolean} {@true when neither the item, nor its parents are
@@ -2091,10 +2307,20 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * miterLimit imposes a limit on the ratio of the miter length to the
 	 * {@link Item#strokeWidth}.
 	 *
-	 * @default 10
 	 * @property
 	 * @name Item#miterLimit
+	 * @default 10
 	 * @type Number
+	 */
+
+	/**
+	 * The winding-rule with which the shape gets filled. Please note that only
+	 * modern browsers support winding-rules other than {@code 'nonzero'}.
+	 *
+	 * @property
+	 * @name Item#windingRule
+	 * @default 'nonzero'
+	 * @type String('nonzero', 'evenodd')
 	 */
 
 	/**
@@ -2120,6 +2346,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * circle.fillColor = new Color(1, 0, 0);
 	 */
 
+	// TODO: Find a better name than selectedColor. It should also be used for
+	// guides, etc.
 	/**
 	 * {@grouptitle Selection Style}
 	 *
@@ -2380,6 +2608,30 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		}
 		if (!_dontNotify)
 			this._changed(/*#=*/ Change.GEOMETRY);
+	},
+
+	/**
+	 * Converts the specified point from global project coordinates to local
+	 * coordinates in relation to the the item's own coordinate space.
+	 *
+	 * @param {Point} point the point to be transformed
+	 * @return {Point} the transformed point as a new instance
+	 */
+	globalToLocal: function(/* point */) {
+		var matrix = this.getGlobalMatrix();
+		return matrix && matrix._transformPoint(Point.read(arguments));
+	},
+
+	/**
+	 * Converts the specified point from local coordinates to global coordinates
+	 * in relation to the the project coordinate space.
+	 *
+	 * @param {Point} point the point to be transformed
+	 * @return {Point} the transformed point as a new instance
+	 */
+	localToGlobal: function(/* point */) {
+		var matrix = this.getGlobalMatrix();
+		return matrix && matrix._inverseTransform(Point.read(arguments));
 	},
 
 	/**
@@ -2774,9 +3026,10 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	/**
 	 * {@grouptitle Event Handling}
 	 * 
-	 * Attach an event handler to the item.
+	 * Attaches an event handler to the item.
 	 *
-	 * @name Item#on
+	 * @name Item#attach
+	 * @alias Item#on
 	 * @function
 	 * @param {String('mousedown', 'mouseup', 'mousedrag', 'click',
 	 * 'doubleclick', 'mousemove', 'mouseenter', 'mouseleave')} type the event
@@ -2806,11 +3059,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * });
 	 */
 	/**
-	 * Attach one or more event handlers to the item.
+	 * Attaches one or more event handlers to the item.
 	 *
-	 * @name Item#on^2
+	 * @name Item#attach
+	 * @alias Item#on
 	 * @function
-	 * @param {Object} param An object literal containing one or more of the
+	 * @param {Object} object an object literal containing one or more of the
 	 * following properties: {@code mousedown, mouseup, mousedrag, click,
 	 * doubleclick, mousemove, mouseenter, mouseleave}.
 	 *
@@ -2866,6 +3120,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * Detach an event handler from the item.
 	 *
 	 * @name Item#detach
+	 * @alias Item#off
 	 * @function
 	 * @param {String('mousedown', 'mouseup', 'mousedrag', 'click',
 	 * 'doubleclick', 'mousemove', 'mouseenter', 'mouseleave')} type the event
@@ -2875,9 +3130,10 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	/**
 	 * Detach one or more event handlers to the item.
 	 *
-	 * @name Item#detach^2
+	 * @name Item#detach
+	 * @alias Item#off
 	 * @function
-	 * @param {Object} param An object literal containing one or more of the
+	 * @param {Object} object an object literal containing one or more of the
 	 * following properties: {@code mousedown, mouseup, mousedrag, click,
 	 * doubleclick, mousemove, mouseenter, mouseleave}
 	 */
@@ -2886,11 +3142,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * Fire an event on the item.
 	 *
 	 * @name Item#fire
+	 * @alias Item#trigger
 	 * @function
 	 * @param {String('mousedown', 'mouseup', 'mousedrag', 'click',
 	 * 'doubleclick', 'mousemove', 'mouseenter', 'mouseleave')} type the event
 	 * type
-	 * @param {Object} event An object literal containing properties describing
+	 * @param {Object} event an object literal containing properties describing
 	 * the event.
 	 */
 
@@ -2915,43 +3172,49 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// We can access internal properties since we're only using this on
 		// items without children, where styles would be merged.
 		var style = this._style,
-			width = style.getStrokeWidth(),
-			join = style.getStrokeJoin(),
-			cap = style.getStrokeCap(),
-			limit = style.getMiterLimit(),
 			fillColor = style.getFillColor(),
 			strokeColor = style.getStrokeColor(),
 			shadowColor = style.getShadowColor();
-		if (width != null)
-			ctx.lineWidth = width;
-		if (join)
-			ctx.lineJoin = join;
-		if (cap)
-			ctx.lineCap = cap;
-		if (limit)
-			ctx.miterLimit = limit;
 		if (fillColor)
 			ctx.fillStyle = fillColor.toCanvasStyle(ctx);
 		if (strokeColor) {
-			ctx.strokeStyle = strokeColor.toCanvasStyle(ctx);
-			var dashArray = style.getDashArray(),
-				dashOffset = style.getDashOffset();
-			if (paper.support.nativeDash && dashArray && dashArray.length) {
-				if ('setLineDash' in ctx) {
-					ctx.setLineDash(dashArray);
-					ctx.lineDashOffset = dashOffset;
-				} else {
-					ctx.mozDash = dashArray;
-					ctx.mozDashOffset = dashOffset;
+			var strokeWidth = style.getStrokeWidth();
+			if (strokeWidth > 0) {
+				ctx.strokeStyle = strokeColor.toCanvasStyle(ctx);
+				ctx.lineWidth = strokeWidth;
+				var strokeJoin = style.getStrokeJoin(),
+					strokeCap = style.getStrokeCap(),
+					miterLimit = style.getMiterLimit();
+				if (strokeJoin)
+					ctx.lineJoin = strokeJoin;
+				if (strokeCap)
+					ctx.lineCap = strokeCap;
+				if (miterLimit)
+					ctx.miterLimit = miterLimit;
+				if (paper.support.nativeDash) {
+					var dashArray = style.getDashArray(),
+						dashOffset = style.getDashOffset();
+					if (dashArray && dashArray.length) {
+						if ('setLineDash' in ctx) {
+							ctx.setLineDash(dashArray);
+							ctx.lineDashOffset = dashOffset;
+						} else {
+							ctx.mozDash = dashArray;
+							ctx.mozDashOffset = dashOffset;
+						}
+					}
 				}
 			}
 		}
 		if (shadowColor) {
-			ctx.shadowColor = shadowColor.toCanvasStyle(ctx);
-			ctx.shadowBlur = style.getShadowBlur();
-			var offset = this.getShadowOffset();
-			ctx.shadowOffsetX = offset.x;
-			ctx.shadowOffsetY = offset.y;
+			var shadowBlur = style.getShadowBlur();
+			if (shadowBlur > 0) {
+				ctx.shadowColor = shadowColor.toCanvasStyle(ctx);
+				ctx.shadowBlur = shadowBlur;
+				var offset = this.getShadowOffset();
+				ctx.shadowOffsetX = offset.x;
+				ctx.shadowOffsetY = offset.y;
+			}
 		}
 	},
 
@@ -2963,15 +3226,17 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			return;
 		// Each time the project gets drawn, it's _drawCount is increased.
 		// Keep the _drawCount of drawn items in sync, so we have an easy
-		// way to filter out selected items that are not being drawn, e.g.
-		// because they are currently not part of the DOM.
+		// way to know for which selected items we need to draw selection info.
 		this._drawCount = this._project._drawCount;
 		// Keep calculating the current global matrix, by keeping a history
 		// and pushing / popping as we go along.
-		var transforms = param.transforms,
+		var trackTransforms = param.trackTransforms,
+			transforms = param.transforms,
 			parentMatrix = transforms[transforms.length - 1],
 			globalMatrix = parentMatrix.clone().concatenate(this._matrix);
-		transforms.push(this._globalMatrix = globalMatrix);
+		// Only keep track of transformation if told so. See Project#draw()
+		if (trackTransforms)
+			transforms.push(this._globalMatrix = globalMatrix);
 		// If the item has a blendMode or is defining an opacity, draw it on
 		// a temporary canvas first and composite the canvas afterwards.
 		// Paths with an opacity < 1 that both define a fillColor
@@ -3007,7 +3272,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			// it, instead of the mainCtx.
 			mainCtx = ctx;
 			ctx = CanvasProvider.getContext(
-					bounds.getSize().ceil().add(new Size(1, 1)));
+					bounds.getSize().ceil().add(new Size(1, 1)), param.ratio);
 		}
 		ctx.save();
 		// If drawing directly, handle opacity and native blending now,
@@ -3029,7 +3294,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			param.clipItem.draw(ctx, param.extend({ clip: true }));
 		this._draw(ctx, param);
 		ctx.restore();
-		transforms.pop();
+		if (trackTransforms)
+			transforms.pop();
 		if (param.clip)
 			ctx.clip();
 		// If a temporary canvas was created, composite it onto the main canvas:
@@ -3038,8 +3304,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			// opacity.
 			BlendMode.process(blendMode, ctx, mainCtx, opacity,
 					// Calculate the pixel offset of the temporary canvas to the
-					// main canvas.
-					itemOffset.subtract(prevOffset));
+					// main canvas. We also need to factor in the pixel ratio.
+					itemOffset.subtract(prevOffset).multiply(param.ratio));
 			// Return the temporary context, so it can be reused
 			CanvasProvider.release(ctx);
 			// Restore previous offset.

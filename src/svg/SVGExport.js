@@ -15,6 +15,7 @@
  * Paper.js DOM to a SVG DOM.
  */
 new function() {
+	// TODO: Consider moving formatter into options object, and pass it along.
 	var formatter;
 
 	function setAttributes(node, attrs) {
@@ -37,11 +38,7 @@ new function() {
 			document.createElementNS('http://www.w3.org/2000/svg', tag), attrs);
 	}
 
-	function getDistance(segments, index1, index2) {
-		return segments[index1]._point.getDistance(segments[index2]._point);
-	}
-
-	function getTransform(item, coordinates) {
+	function getTransform(item, coordinates, center) {
 		var matrix = item._matrix,
 			trans = matrix.getTranslation(),
 			attrs = {};
@@ -54,8 +51,8 @@ new function() {
 			// in local coordinates.
 			matrix = matrix.shiftless();
 			var point = matrix._inverseTransform(trans);
-			attrs.x = point.x;
-			attrs.y = point.y;
+			attrs[center ? 'cx' : 'x'] = point.x;
+			attrs[center ? 'cy' : 'y'] = point.y;
 			trans = null;
 		}
 		if (matrix.isIdentity())
@@ -80,96 +77,13 @@ new function() {
 		return attrs;
 	}
 
-	function determineAngle(path, segments, type, center) {
-		// If the object is a circle, ellipse, rectangle, or rounded rectangle,
-		// see if it is placed at an angle, by figuring out its topCenter point
-		// and measuring the angle to its center.
-		var topCenter = type === 'rect'
-				? segments[1]._point.add(segments[2]._point).divide(2)
-				: type === 'roundrect'
-				? segments[3]._point.add(segments[4]._point).divide(2)
-				: type === 'circle' || type === 'ellipse'
-				? segments[1]._point
-				: null;
-		var angle = topCenter && topCenter.subtract(center).getAngle() + 90;
-		return Numerical.isZero(angle || 0) ? 0 : angle;
-	}
-
-	function determineType(path, segments) {
-		// Returns true if the the two segment indices are the beggining of two
-		// lines and if the wto lines are parallel.
-		function isColinear(i, j) {
-			var seg1 = segments[i],
-				seg2 = seg1.getNext(),
-				seg3 = segments[j],
-				seg4 = seg3.getNext();
-			return seg1._handleOut.isZero() && seg2._handleIn.isZero()
-					&& seg3._handleOut.isZero() && seg4._handleIn.isZero()
-					&& seg2._point.subtract(seg1._point).isColinear(
-						seg4._point.subtract(seg3._point));
-		}
-
-		// Returns true if the segment at the given index is the beginning of
-		// a orthogonal arc segment. The code is looking at the length of the
-		// handles and their relation to the distance to the imaginary corner
-		// point. If the relation is kappa, then it's an arc.
-		function isArc(i) {
-			var segment = segments[i],
-				next = segment.getNext(),
-				handle1 = segment._handleOut,
-				handle2 = next._handleIn,
-				kappa = Numerical.KAPPA;
-			if (handle1.isOrthogonal(handle2)) {
-				var from = segment._point,
-					to = next._point,
-					// Find the corner point by intersecting the lines described
-					// by both handles:
-					corner = new Line(from, handle1, true).intersect(
-							new Line(to, handle2, true), true);
-				return corner && Numerical.isZero(handle1.getLength() /
-						corner.subtract(from).getLength() - kappa)
-					&& Numerical.isZero(handle2.getLength() /
-						corner.subtract(to).getLength() - kappa);
-			}
-		}
-
-		// See if actually have any curves in the path. Differentiate
-		// between straight objects (line, polyline, rect, and  polygon) and
-		// objects with curves(circle, ellipse, roundedRectangle).
-		if (path.isPolygon()) {
-			return  segments.length === 4 && path._closed
-					&& isColinear(0, 2) && isColinear(1, 3)
-					? 'rect'
-					: segments.length === 0
-						? 'empty'
-						: segments.length >= 3
-							? path._closed ? 'polygon' : 'polyline'
-							: 'line';
-		} else if (path._closed) {
-			if (segments.length === 8
-					&& isArc(0) && isArc(2) && isArc(4) && isArc(6)
-					&& isColinear(1, 5) && isColinear(3, 7)) {
-				return 'roundrect';
-			} else if (segments.length === 4
-					&& isArc(0) && isArc(1) && isArc(2) && isArc(3)) {
-				// If the distance between (point0 and point2) and (point1
-				// and point3) are equal, then it is a circle
-				return Numerical.isZero(getDistance(segments, 0, 2)
-						- getDistance(segments, 1, 3))
-						? 'circle'
-						: 'ellipse';
-			} 
-		}
-		return 'path';
-	}
-
-	function exportGroup(item) {
+	function exportGroup(item, options) {
 		var attrs = getTransform(item),
 			children = item._children;
 		var node = createElement('g', attrs);
 		for (var i = 0, l = children.length; i < l; i++) {
 			var child = children[i];
-			var childNode = exportSVG(child);
+			var childNode = exportSVG(child, options);
 			if (childNode) {
 				if (child.isClipMask()) {
 					var clip = createElement('clipPath');
@@ -198,102 +112,70 @@ new function() {
 		return createElement('image', attrs);
 	}
 
-	function exportPath(item) {
+	function exportPath(item, options) {
+		if (options.matchShapes) {
+			var shape = item.toShape(false);
+			if (shape)
+				return exportShape(shape, options);
+		}
 		var segments = item._segments,
-			center = item.getPosition(true),
-			type = determineType(item, segments),
-			angle = determineAngle(item, segments, type, center),
+			type,
 			attrs;
-		switch (type) {
-		case 'empty':
+		if (segments.length === 0)
 			return null;
-		case 'path':
+		if (item.isPolygon()) {
+			if (segments.length >= 3) {
+				type = item._closed ? 'polygon' : 'polyline';
+				var parts = [];
+				for(i = 0, l = segments.length; i < l; i++)
+					parts.push(formatter.point(segments[i]._point));
+				attrs = {
+					points: parts.join(' ')
+				};
+			} else {
+				type = 'line';
+				var first = segments[0]._point,
+					last = segments[segments.length - 1]._point;
+				attrs = {
+					x1: first.x,
+					y1: first.y,
+					x2: last.x,
+					y2: last.y
+				};
+			}
+		} else {
+			type = 'path';
 			var data = item.getPathData();
 			attrs = data && { d: data };
-			break;
-		case 'polyline':
-		case 'polygon':
-			var parts = [];
-			for(i = 0, l = segments.length; i < l; i++)
-				parts.push(formatter.point(segments[i]._point));
-			attrs = {
-				points: parts.join(' ')
-			};
-			break;
-		case 'rect':
-			var width = getDistance(segments, 0, 3),
-				height = getDistance(segments, 0, 1),
-				// Counter-compensate the determined rotation angle
-				point = segments[1]._point.rotate(-angle, center);
-			attrs = {
-				x: point.x,
-				y: point.y,
-				width: width,
-				height: height
-			};
-			break;
-		case 'roundrect':
-			type = 'rect';
-			// d-variables and point are used to determine the rounded corners
-			// for the rounded rectangle
-			var width = getDistance(segments, 1, 6),
-				height = getDistance(segments, 0, 3),
-				// Subtract side lengths from total width and divide by 2 to get
-				// corner radius size
-				rx = (width - getDistance(segments, 0, 7)) / 2,
-				ry = (height - getDistance(segments, 1, 2)) / 2,
-				// Calculate topLeft corner point, by using sides vectors and
-				// subtracting normalized rx vector to calculate arc corner. 
-				left = segments[3]._point, // top-left side point
-				right = segments[4]._point, // top-right side point
-				point = left.subtract(right.subtract(left).normalize(rx))
-						// Counter-compensate the determined rotation angle
-						.rotate(-angle, center);
-			attrs = {
-				x: point.x,
-				y: point.y,
-				width: width,
-				height: height,
-				rx: rx,
-				ry: ry
-			};
-			break;
-		case'line':
-			var first = segments[0]._point,
-				last = segments[segments.length - 1]._point;
-			attrs = {
-				x1: first.x,
-				y1: first.y,
-				x2: last.x,
-				y2: last.y
-			};
-			break;
-		case 'circle':
-			var radius = getDistance(segments, 0, 2) / 2;
-			attrs = {
-				cx: center.x,
-				cy: center.y,
-				r: radius
-			};
-			break;
-		case 'ellipse':
-			var rx = getDistance(segments, 2, 0) / 2,
-				ry = getDistance(segments, 3, 1) / 2;
-			attrs = {
-				cx: center.x,
-				cy: center.y,
-				rx: rx,
-				ry: ry
-			};
-			break;
-		}
-		if (angle) {
-			attrs.transform = 'rotate(' + formatter.number(angle) + ','
-					+ formatter.point(center) + ')';
-			// Tell applyStyle() that to transform the gradient the other way
-			item._gradientMatrix = new Matrix().rotate(-angle, center);
 		}
 		return createElement(type, attrs);
+	}
+
+	function exportShape(item) {
+		var shape = item._shape,
+			radius = item._radius,
+			attrs = getTransform(item, true, shape !== 'rectangle');
+		if (shape === 'rectangle') {
+			shape = 'rect'; // SVG
+			var size = item._size,
+				width = size.width,
+				height = size.height;
+			attrs.x -= width / 2;
+			attrs.y -= height / 2;
+			attrs.width = width;
+			attrs.height = height;
+			if (radius.isZero())
+				radius = null;
+		}
+		if (radius) {
+			if (shape === 'circle') {
+				attrs.r = radius;
+			} else {
+				attrs.rx = radius.width;
+				attrs.ry = radius.height;
+			}
+		}
+		return createElement(shape, attrs);
 	}
 
 	function exportCompoundPath(item) {
@@ -304,17 +186,17 @@ new function() {
 		return createElement('path', attrs);
 	}
 
-	function exportPlacedSymbol(item) {
+	function exportPlacedSymbol(item, options) {
 		var attrs = getTransform(item, true),
 			symbol = item.getSymbol(),
-			symbolNode = getDefinition(symbol, 'symbol');
+			symbolNode = getDefinition(symbol, 'symbol'),
 			definition = symbol.getDefinition(),
 			bounds = definition.getBounds();
 		if (!symbolNode) {
 			symbolNode = createElement('symbol', {
 				viewBox: formatter.rectangle(bounds)
 			});
-			symbolNode.appendChild(exportSVG(definition));
+			symbolNode.appendChild(exportSVG(definition, options));
 			setDefinition(symbol, symbolNode, 'symbol');
 		}
 		attrs.href = '#' + symbolNode.id;
@@ -325,7 +207,7 @@ new function() {
 		return createElement('use', attrs);
 	}
 
-	function exportGradient(color, item) {
+	function exportGradient(color) {
 		// NOTE: As long as the fillTransform attribute is not implemented,
 		// we need to create a separate gradient object for each gradient,
 		// even when they share the same gradient defintion.
@@ -335,9 +217,8 @@ new function() {
 		if (!gradientNode) {
 			var gradient = color.getGradient(),
 				radial = gradient._radial,
-				matrix = item._gradientMatrix,
-				origin = color.getOrigin().transform(matrix),
-				destination = color.getDestination().transform(matrix),
+				origin = color.getOrigin().transform(),
+				destination = color.getDestination().transform(),
 				attrs;
 			if (radial) {
 				attrs = {
@@ -347,7 +228,7 @@ new function() {
 				};
 				var highlight = color.getHighlight();
 				if (highlight) {
-					highlight = highlight.transform(matrix);
+					highlight = highlight.transform();
 					attrs.fx = highlight.x;
 					attrs.fy = highlight.y;
 				}
@@ -393,6 +274,7 @@ new function() {
 		layer: exportGroup,
 		raster: exportRaster,
 		path: exportPath,
+		shape: exportShape,
 		'compound-path': exportCompoundPath,
 		'placed-symbol': exportPlacedSymbol,
 		'point-text': exportText
@@ -443,7 +325,6 @@ new function() {
 		if (item._visibility != null && !item._visibility)
 			attrs.visibility = 'hidden';
 
-		delete item._gradientMatrix; // see exportPath()
 		return setAttributes(node, attrs);
 	}
 
@@ -467,57 +348,60 @@ new function() {
 	}
 
 	function exportDefinitions(node, options) {
-		if (!definitions)
-			return node;
-		// We can only use svg nodes as defintion containers. Have the loop
-		// produce one if it's a single item of another type (when calling
-		// #exportSVG() on an item rather than a whole project)
-		// jsdom in Node.js uses uppercase values for nodeName...
-		var svg = node.nodeName.toLowerCase() === 'svg' && node,
+		var svg = node,
 			defs = null;
-		for (var i in definitions.svgs) {
-			// This code is inside the loop so we only create a container if we
-			// actually have svgs.
-			if (!defs) {
-				if (!svg) {
-					svg = createElement('svg');
-					svg.appendChild(node);
+		if (definitions) {
+			// We can only use svg nodes as defintion containers. Have the loop
+			// produce one if it's a single item of another type (when calling
+			// #exportSVG() on an item rather than a whole project)
+			// jsdom in Node.js uses uppercase values for nodeName...
+			svg = node.nodeName.toLowerCase() === 'svg' && node;
+			for (var i in definitions.svgs) {
+				// This code is inside the loop so we only create a container if
+				// we actually have svgs.
+				if (!defs) {
+					if (!svg) {
+						svg = createElement('svg');
+						svg.appendChild(node);
+					}
+					defs = svg.insertBefore(createElement('defs'),
+							svg.firstChild);
 				}
-				defs = svg.insertBefore(createElement('defs'), svg.firstChild);
+				defs.appendChild(definitions.svgs[i]);
 			}
-			defs.appendChild(definitions.svgs[i]);
+			// Clear definitions at the end of export
+			definitions = null;
 		}
-		// Clear definitions at the end of export
-		definitions = null;
-		return options && options.asString
+		return options.asString
 				? new XMLSerializer().serializeToString(svg)
 				: svg;
 	}
 
-	function exportSVG(item) {
+	function exportSVG(item, options) {
 		var exporter = exporters[item._type],
-			node = exporter && exporter(item, item._type);
+			node = exporter && exporter(item, options);
 		if (node && item._data)
 			node.setAttribute('data-paper-data', JSON.stringify(item._data));
 		return node && applyStyle(item, node);
 	}
 
 	function setOptions(options) {
-		formatter = options && options.precision
-				? new Formatter(options.precision)
-				: Formatter.instance;
+		if (!options)
+			options = {};
+		formatter = new Formatter(options.precision);
+		return options;
 	}
 
 	Item.inject({
 		exportSVG: function(options) {
-			setOptions(options);
-			return exportDefinitions(exportSVG(this), options);
+			options = setOptions(options);
+			return exportDefinitions(exportSVG(this, options), options);
 		}
 	});
 
 	Project.inject({
 		exportSVG: function(options) {
-			setOptions(options);
+			options = setOptions(options);
 			var layers = this.layers,
 				size = this.view.getSize(),
 				node = createElement('svg', {
@@ -530,7 +414,7 @@ new function() {
 					'xmlns:xlink': 'http://www.w3.org/1999/xlink'
 				});
 			for (var i = 0, l = layers.length; i < l; i++)
-				node.appendChild(exportSVG(layers[i]));
+				node.appendChild(exportSVG(layers[i], options));
 			return exportDefinitions(node, options);
 		}
 	});

@@ -111,7 +111,7 @@ var Rectangle = Base.extend(/** @lends Rectangle# */{
 			}
 		}
 		if (!read) {
-			// Read a point argument and look at the next value to see wether
+			// Read a point argument and look at the next value to see whether
 			// it's a size or a point, then read accordingly.
 			// We're supporting both reading from a normal arguments list and
 			// covering the Rectangle({ from: , to: }) constructor, through
@@ -205,12 +205,12 @@ var Rectangle = Base.extend(/** @lends Rectangle# */{
 			rect = Rectangle.read(arguments);
 		return rect === this
 				|| rect && this.x === rect.x && this.y === rect.y
-					&& this.width === rect.width && this.height=== rect.height
+					&& this.width === rect.width && this.height === rect.height
 				|| false;
 	},
 
 	/**
-	 * @return {String} A string representation of this rectangle.
+	 * @return {String} a string representation of this rectangle
 	 */
 	toString: function() {
 		var f = Formatter.instance;
@@ -647,8 +647,8 @@ var Rectangle = Base.extend(/** @lends Rectangle# */{
 	 *
 	 * @param {Rectangle} rect The rectangle to be intersected with this
 	 *                         rectangle
-	 * @return {Rectangle} The largest rectangle contained in both the specified
-	 *                     rectangle and in this rectangle.
+	 * @return {Rectangle} the largest rectangle contained in both the specified
+	 *                     rectangle and in this rectangle
 	 *
 	 * @example {@paperscript}
 	 * // Intersecting two rectangles and visualizing the result using rectangle
@@ -742,7 +742,7 @@ var Rectangle = Base.extend(/** @lends Rectangle# */{
 	 * {@code hor} amount and in vertical direction by the specified {@code ver}
 	 * amount.
 	 *
-	 * @name Rectangle#expand^2
+	 * @name Rectangle#expand
 	 * @function
 	 * @param {Number} hor
 	 * @param {Number} ver
@@ -766,7 +766,7 @@ var Rectangle = Base.extend(/** @lends Rectangle# */{
 	 * {@code hor} amount and in vertical direction by the specified {@code ver}
 	 * amount from its center.
 	 *
-	 * @name Rectangle#scale^2
+	 * @name Rectangle#scale
 	 * @function
 	 * @param {Number} hor
 	 * @param {Number} ver
@@ -829,12 +829,12 @@ var LinkedRectangle = Rectangle.extend({
 		this._setter = setter;
 	},
 
-	set: function(x, y, width, height, dontNotify) {
+	set: function(x, y, width, height, _dontNotify) {
 		this._x = x;
 		this._y = y;
 		this._width = width;
 		this._height = height;
-		if (!dontNotify)
+		if (!_dontNotify)
 			this._owner[this._setter](this);
 		return this;
 	}

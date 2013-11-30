@@ -77,7 +77,7 @@ var PaperScope = Base.extend(/** @lends PaperScope# */{
 	 *
 	 * @type String
 	 */
-	version: '/*#=*/ options.version',
+	version: '/*#=*/ __options.version',
 
 	/**
 	 * The currently active project.
@@ -114,6 +114,18 @@ var PaperScope = Base.extend(/** @lends PaperScope# */{
 	},
 
 	/**
+	 * A reference to the local scope. This is required, so `paper` will always
+	 * refer to the local scope, even when calling into it from another scope.
+	 * `paper.activate();` will have to be called in such a situation.
+	 * @type PaperScript
+	 * @private
+	 * @bean
+	 */
+	getPaper: function() {
+		return this;
+	},
+
+	/**
 	 * The list of available tools.
 	 * @name PaperScope#tools
 	 * @type Tool[]
@@ -129,7 +141,12 @@ var PaperScope = Base.extend(/** @lends PaperScope# */{
 	 * Injects the paper scope into any other given scope. Can be used for
 	 * examle to inject the currently active PaperScope into the window's global
 	 * scope, to emulate PaperScript-style globally accessible Paper classes and
-	 * objects:
+	 * objects.
+	 *
+	 * <b>Please note:</b> Using this method may override native constructors
+	 * (e.g. Path, RGBColor). This may cause problems when using Paper.js in
+	 * conjunction with other libraries that rely on these constructors. Keep
+	 * the library scoped if you encounter issues caused by this.
 	 *
 	 * @example
 	 * paper.install(window);
@@ -150,7 +167,7 @@ var PaperScope = Base.extend(/** @lends PaperScope# */{
 		// Do not use Base.each, since we also want to enumerate over
 		// fields on PaperScope.prototype, e.g. all classes
 		for (var key in this) {
-			if (!/^(version|_id)/.test(key) && !(key in scope))
+			if (!/^(version|_id)/.test(key))
 				scope[key] = this[key];
 		}
 	},

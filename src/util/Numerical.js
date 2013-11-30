@@ -70,7 +70,7 @@ var Numerical = new function() {
 		 * Numerical.EPSILON.
 		 */
 		isZero: function(val) {
-			return abs(val) <= this.EPSILON;
+			return abs(val) <= Numerical.EPSILON;
 		},
 
 		/**
@@ -126,28 +126,36 @@ var Numerical = new function() {
 		 *
 		 * a*x^2 + b*x + c = 0
 		 */
-		solveQuadratic: function(a, b, c, roots) {
+		solveQuadratic: function(a, b, c, roots, min, max) {
+			var unbound = min === undefined,
+				count = 0;
+
+			function add(root) {
+				if (unbound || root >= min && root <= max)
+					roots[count++] = root;
+				return count;
+			}
+
 			// Code ported over and adapted from Uintah library (MIT license).
 			var epsilon = this.EPSILON;
 			// If a is 0, equation is actually linear, return 0 or 1 easy roots.
 			if (abs(a) < epsilon) {
-				if (abs(b) >= epsilon) {
-					roots[0] = -c / b;
-					return 1;
-				}
+				if (abs(b) >= epsilon)
+					return add(-c / b);
 				// If all the coefficients are 0, we have infinite solutions!
 				return abs(c) < epsilon ? -1 : 0; // Infinite or 0 solutions
 			}
-			var q = b * b - 4 * a * c;
-			if (q < 0)
-				return 0; // 0 solutions
-			q = sqrt(q);
-			a *= 2; // Prepare division by (2 * a)
-			var n = 0;
-			roots[n++] = (-b - q) / a;
-			if (q > 0)
-				roots[n++] = (-b + q) / a;
-			return n; // 1 or 2 solutions
+			// Convert to normal form: x^2 + px + q = 0
+			var p = b / (2 * a);
+			var q = c / a;
+			var p2 = p * p;
+			if (p2 < q - epsilon)
+				return 0;
+			var s = p2 > q ? sqrt(p2 - q) : 0;
+			add (s - p);
+			if (s > 0)
+				add(-s - p);
+			return count;
 		},
 
 		/**
@@ -156,12 +164,22 @@ var Numerical = new function() {
 		 *
 		 * a*x^3 + b*x^2 + c*x + d = 0
 		 */
-		solveCubic: function(a, b, c, d, roots) {
-			// Code ported over and adapted from Uintah library (MIT license).
+		solveCubic: function(a, b, c, d, roots, min, max) {
 			var epsilon = this.EPSILON;
 			// If a is 0, equation is actually quadratic.
 			if (abs(a) < epsilon)
-				return Numerical.solveQuadratic(b, c, d, roots);
+				return Numerical.solveQuadratic(b, c, d, roots, min, max);
+
+			var unbound = min === undefined,
+				count = 0;
+
+			function add(root) {
+				if (unbound || root >= min && root <= max)
+					roots[count++] = root;
+				return count;
+			}
+
+			// Code ported over and adapted from Uintah library (MIT license).
 			// Normalize to form: x^3 + b x^2 + c x + d = 0:
 			b /= a;
 			c /= a;
@@ -176,31 +194,26 @@ var Numerical = new function() {
 			// Substitute x = y - b/3 to eliminate quadric term: x^3 +px + q = 0
 			b /= 3;
 			if (abs(D) < epsilon) {
-				if (abs(q) < epsilon) { // One triple solution.
-					roots[0] = - b;
-					return 1;
-				} 
+				if (abs(q) < epsilon) // One triple solution.
+					return add(-b);
 				// One single and one double solution.
 				var sqp = sqrt(p),
 					snq = q > 0 ? 1 : -1;
-				roots[0] = -snq * 2 * sqp - b;
-				roots[1] = snq * sqp - b;
-				return 2;
+				add(-snq * 2 * sqp - b);
+				return add(snq * sqp - b);
 			}
 			if (D < 0) { // Casus irreducibilis: three real solutions
 				var sqp = sqrt(p),
 					phi = Math.acos(q / (sqp * sqp * sqp)) / 3,
 					t = -2 * sqp,
 					o = 2 * PI / 3;
-				roots[0] = t * cos(phi) - b;
-				roots[1] = t * cos(phi + o) - b;
-				roots[2] = t * cos(phi - o) - b;
-				return 3;
+				add(t * cos(phi) - b);
+				add(t * cos(phi + o) - b);
+				return add(t * cos(phi - o) - b);
 			}
 			// One real solution
 			var A = (q > 0 ? -1 : 1) * pow(abs(q) + sqrt(D), 1 / 3);
-			roots[0] = A + p / A - b;
-			return 1;
+			return add(A + p / A - b);
 		}
 	};
 };

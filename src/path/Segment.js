@@ -54,7 +54,7 @@ var Segment = Base.extend(/** @lends Segment# */{
 	 * Creates a new Segment object.
 	 *
 	 * @name Segment#initialize
-	 * @param {Object} object An object literal containing properties to
+	 * @param {Object} object an object literal containing properties to
 	 * be set on the segment.
 	 *
 	 * @example {@paperscript}
@@ -117,7 +117,7 @@ var Segment = Base.extend(/** @lends Segment# */{
 		if (count === 0) {
 			// Nothing
 		} else if (count === 1) {
-			// Note: This copies from existing segments through bean getters
+			// Note: This copies from existing segments through accessors.
 			if (arg0.point) {
 				point = arg0.point;
 				handleIn = arg0.handleIn;
@@ -125,24 +125,22 @@ var Segment = Base.extend(/** @lends Segment# */{
 			} else {
 				point = arg0;
 			}
-		} else if (count < 6) {
-			if (count == 2 && arg1.x === undefined) {
-				point = [ arg0, arg1 ];
-			} else {
-				point = arg0;
-				// Doesn't matter if these arguments exist, SegmentPointcreate
-				// produces creates points with (0, 0) otherwise
-				handleIn = arg1;
-				handleOut = arg2;
-			}
-		} else if (count === 6) {
-			point = [ arg0, arg1 ];
-			handleIn = [ arg2, arg3 ];
-			handleOut = [ arg4, arg5 ];
+		} else if (count === 2 && typeof arg0 === 'number') {
+			point = arguments;
+		} else if (count <= 3) {
+			point = arg0;
+			// Doesn't matter if these arguments exist, SegmentPointcreate
+			// produces creates points with (0, 0) otherwise
+			handleIn = arg1;
+			handleOut = arg2;
+		} else { // Read points from the arguments list as a row of numbers
+			point = arg0 !== undefined ? [ arg0, arg1 ] : null;
+			handleIn = arg2 !== undefined ? [ arg2, arg3 ] : null;
+			handleOut = arg4 !== undefined ? [ arg4, arg5 ] : null;
 		}
-		this._point = new SegmentPoint(point, this);
-		this._handleIn = new SegmentPoint(handleIn, this);
-		this._handleOut = new SegmentPoint(handleOut, this);
+		new SegmentPoint(point, this, '_point');
+		new SegmentPoint(handleIn, this, '_handleIn');
+		new SegmentPoint(handleOut, this, '_handleOut');
 	},
 
 	_serialize: function(options) {
@@ -230,6 +228,7 @@ var Segment = Base.extend(/** @lends Segment# */{
 		// this.corner = !this._handleIn.isColinear(this._handleOut);
 	},
 
+	// TODO: Rename this to #corner?
 	/**
 	 * Specifies whether the segment has no handles defined, meaning it connects
 	 * two straight lines.
@@ -244,6 +243,56 @@ var Segment = Base.extend(/** @lends Segment# */{
 	setLinear: function() {
 		this._handleIn.set(0, 0);
 		this._handleOut.set(0, 0);
+	},
+
+	// DOCS: #isColinear(segment), #isOrthogonal(), #isArc()
+
+	/**
+	 * Returns true if the the two segments are the beggining of two lines and
+	 * if these two lines are running parallel.
+	 */
+	isColinear: function(segment) {
+		var next1 = this.getNext(),
+			next2 = segment.getNext();
+		return this._handleOut.isZero() && next1._handleIn.isZero()
+				&& segment._handleOut.isZero() && next2._handleIn.isZero()
+				&& next1._point.subtract(this._point).isColinear(
+					next2._point.subtract(segment._point));
+	},
+
+	isOrthogonal: function() {
+		var prev = this.getPrevious(),
+			next = this.getNext();
+		return prev._handleOut.isZero() && this._handleIn.isZero()
+			&& this._handleOut.isZero() && next._handleIn.isZero()
+			&& this._point.subtract(prev._point).isOrthogonal(
+					next._point.subtract(this._point));
+	},
+
+	/**
+	 * Returns true if the segment at the given index is the beginning of an
+	 * orthogonal arc segment. The code looks at the length of the handles and
+	 * their relation to the distance to the imaginary corner point. If the
+	 * relation is kappa, then it's an arc.
+	 */
+	isArc: function() {
+		var next = this.getNext(),
+			handle1 = this._handleOut,
+			handle2 = next._handleIn,
+			kappa = Numerical.KAPPA;
+		if (handle1.isOrthogonal(handle2)) {
+			var from = this._point,
+				to = next._point,
+				// Find the corner point by intersecting the lines described
+				// by both handles:
+				corner = new Line(from, handle1, true).intersect(
+						new Line(to, handle2, true), true);
+			return corner && Numerical.isZero(handle1.getLength() /
+					corner.subtract(from).getLength() - kappa)
+				&& Numerical.isZero(handle2.getLength() /
+					corner.subtract(to).getLength() - kappa);
+		}
+		return false;
 	},
 
 	_isSelected: function(point) {
@@ -265,7 +314,7 @@ var Segment = Base.extend(/** @lends Segment# */{
 				!!(state & /*#=*/ SelectionState.HANDLE_IN),
 				!!(state & /*#=*/ SelectionState.HANDLE_OUT)
 			];
-		if (point == this._point) {
+		if (point === this._point) {
 			if (selected) {
 				// We're selecting point, deselect the handles
 				selection[1] = selection[2] = false;
@@ -281,7 +330,7 @@ var Segment = Base.extend(/** @lends Segment# */{
 			}
 			selection[0] = selected;
 		} else {
-			var index = point == this._handleIn ? 1 : 2;
+			var index = point === this._handleIn ? 1 : 2;
 			if (selection[index] != selected) {
 				// When selecting handles, the point get deselected.
 				if (selected)
@@ -429,7 +478,7 @@ var Segment = Base.extend(/** @lends Segment# */{
 	},
 
 	equals: function(segment) {
-		return segment === this || segment
+		return segment === this || segment && this._class === segment._class
 				&& this._point.equals(segment._point)
 				&& this._handleIn.equals(segment._handleIn)
 				&& this._handleOut.equals(segment._handleOut)
@@ -437,7 +486,7 @@ var Segment = Base.extend(/** @lends Segment# */{
 	},
 
 	/**
-	 * @return {String} A string representation of the segment.
+	 * @return {String} a string representation of the segment
 	 */
 	toString: function() {
 		var parts = [ 'point: ' + this._point ];

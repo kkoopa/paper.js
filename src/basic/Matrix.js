@@ -43,19 +43,19 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	/**
 	 * Creates a 2D affine transform.
 	 *
-	 * @param {Number} a The scaleX coordinate of the transform
-	 * @param {Number} c The shearY coordinate of the transform
-	 * @param {Number} b The shearX coordinate of the transform
-	 * @param {Number} d The scaleY coordinate of the transform
-	 * @param {Number} tx The translateX coordinate of the transform
-	 * @param {Number} ty The translateY coordinate of the transform
+	 * @param {Number} a the scaleX coordinate of the transform
+	 * @param {Number} c the shearY coordinate of the transform
+	 * @param {Number} b the shearX coordinate of the transform
+	 * @param {Number} d the scaleY coordinate of the transform
+	 * @param {Number} tx the translateX coordinate of the transform
+	 * @param {Number} ty the translateY coordinate of the transform
 	 */
 	initialize: function Matrix(arg) {
 		var count = arguments.length,
 			ok = true;
-		if (count == 6) {
+		if (count === 6) {
 			this.set.apply(this, arguments);
-		} else if (count == 1) {
+		} else if (count === 1) {
 			if (arg instanceof Matrix) {
 				this.set(arg._a, arg._c, arg._b, arg._d, arg._tx, arg._ty);
 			} else if (Array.isArray(arg)) {
@@ -63,7 +63,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 			} else {
 				ok = false;
 			}
-		} else if (count == 0) {
+		} else if (count === 0) {
 			this.reset();
 		} else {
 			ok = false;
@@ -75,21 +75,23 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	/**
 	 * Sets this transform to the matrix specified by the 6 values.
 	 *
-	 * @param {Number} a The scaleX coordinate of the transform
-	 * @param {Number} c The shearY coordinate of the transform
-	 * @param {Number} b The shearX coordinate of the transform
-	 * @param {Number} d The scaleY coordinate of the transform
-	 * @param {Number} tx The translateX coordinate of the transform
-	 * @param {Number} ty The translateY coordinate of the transform
-	 * @return {Matrix} This affine transform
+	 * @param {Number} a the scaleX coordinate of the transform
+	 * @param {Number} c the shearY coordinate of the transform
+	 * @param {Number} b the shearX coordinate of the transform
+	 * @param {Number} d the scaleY coordinate of the transform
+	 * @param {Number} tx the translateX coordinate of the transform
+	 * @param {Number} ty the translateY coordinate of the transform
+	 * @return {Matrix} this affine transform
 	 */
-	set: function(a, c, b, d, tx, ty) {
+	set: function(a, c, b, d, tx, ty, _dontNotify) {
 		this._a = a;
 		this._c = c;
 		this._b = b;
 		this._d = d;
 		this._tx = tx;
 		this._ty = ty;
+		if (!_dontNotify)
+			this._changed();
 		return this;
 	},
 
@@ -97,8 +99,13 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		return Base.serialize(this.getValues(), options);
 	},
 
+	_changed: function() {
+		if (this._owner)
+			this._owner._changed(/*#=*/ Change.GEOMETRY);
+	},
+
 	/**
-	 * @return {Matrix} A copy of this transform.
+	 * @return {Matrix} a copy of this transform
 	 */
 	clone: function() {
 		return new Matrix(this._a, this._c, this._b, this._d,
@@ -112,14 +119,14 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 * @return {Boolean} {@true if the matrices are equal}
 	 */
 	equals: function(mx) {
-		return mx === this || mx && this._a == mx._a && this._b == mx._b
-				&& this._c == mx._c && this._d == mx._d && this._tx == mx._tx
-				&& this._ty == mx._ty
+		return mx === this || mx && this._a === mx._a && this._b === mx._b
+				&& this._c === mx._c && this._d === mx._d
+				&& this._tx === mx._tx && this._ty === mx._ty
 				|| false;
 	},
 
 	/**
-	 * @return {String} A string representation of this transform.
+	 * @return {String} a string representation of this transform
 	 */
 	toString: function() {
 		var f = Formatter.instance;
@@ -136,6 +143,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	reset: function() {
 		this._a = this._d = 1;
 		this._c = this._b = this._tx = this._ty = 0;
+		this._changed();
 		return this;
 	},
 
@@ -144,19 +152,19 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 *
 	 * @name Matrix#scale
 	 * @function
-	 * @param {Number} scale The scaling factor
-	 * @param {Point} [center] The center for the scaling transformation
-	 * @return {Matrix} This affine transform
+	 * @param {Number} scale the scaling factor
+	 * @param {Point} [center] the center for the scaling transformation
+	 * @return {Matrix} this affine transform
 	 */
 	/**
 	 * Concatenates this transform with a scaling transformation.
 	 *
 	 * @name Matrix#scale
 	 * @function
-	 * @param {Number} hor The horizontal scaling factor
-	 * @param {Number} ver The vertical scaling factor
-	 * @param {Point} [center] The center for the scaling transformation
-	 * @return {Matrix} This affine transform
+	 * @param {Number} hor the horizontal scaling factor
+	 * @param {Number} ver the vertical scaling factor
+	 * @param {Point} [center] the center for the scaling transformation
+	 * @return {Matrix} this affine transform
 	 */
 	scale: function(/* scale, center */) {
 		// Do not modify scale, center, since that would arguments of which
@@ -171,6 +179,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		this._d *= scale.y;
 		if (center)
 			this.translate(center.negate());
+		this._changed();
 		return this;
 	},
 
@@ -179,17 +188,17 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 *
 	 * @name Matrix#translate
 	 * @function
-	 * @param {Point} point The vector to translate by
-	 * @return {Matrix} This affine transform
+	 * @param {Point} point the vector to translate by
+	 * @return {Matrix} this affine transform
 	 */
 	/**
 	 * Concatenates this transform with a translate transformation.
 	 *
 	 * @name Matrix#translate
 	 * @function
-	 * @param {Number} dx The distance to translate in the x direction
-	 * @param {Number} dy The distance to translate in the y direction
-	 * @return {Matrix} This affine transform
+	 * @param {Number} dx the distance to translate in the x direction
+	 * @param {Number} dy the distance to translate in the y direction
+	 * @return {Matrix} this affine transform
 	 */
 	translate: function(point) {
 		point = Point.read(arguments);
@@ -197,6 +206,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 			y = point.y;
 		this._tx += x * this._a + y * this._b;
 		this._ty += x * this._c + y * this._d;
+		this._changed();
 		return this;
 	},
 
@@ -206,9 +216,9 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 *
 	 * @name Matrix#rotate
 	 * @function
-	 * @param {Number} angle The angle of rotation measured in degrees
-	 * @param {Point} center The anchor point to rotate around
-	 * @return {Matrix} This affine transform
+	 * @param {Number} angle the angle of rotation measured in degrees
+	 * @param {Point} center the anchor point to rotate around
+	 * @return {Matrix} this affine transform
 	 */
 	/**
 	 * Concatenates this transform with a rotation transformation around an
@@ -216,10 +226,10 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 *
 	 * @name Matrix#rotate
 	 * @function
-	 * @param {Number} angle The angle of rotation measured in degrees
-	 * @param {Number} x The x coordinate of the anchor point
-	 * @param {Number} y The y coordinate of the anchor point
-	 * @return {Matrix} This affine transform
+	 * @param {Number} angle the angle of rotation measured in degrees
+	 * @param {Number} x the x coordinate of the anchor point
+	 * @param {Number} y the y coordinate of the anchor point
+	 * @return {Matrix} this affine transform
 	 */
 	rotate: function(angle, center) {
 		center = Point.read(arguments, 1);
@@ -241,6 +251,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		this._d = -sin * c + cos * d;
 		this._tx += tx * a + ty * b;
 		this._ty += tx * c + ty * d;
+		this._changed();
 		return this;
 	},
 
@@ -249,19 +260,19 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 *
 	 * @name Matrix#shear
 	 * @function
-	 * @param {Point} point The shear factor in x and y direction
-	 * @param {Point} [center] The center for the shear transformation
-	 * @return {Matrix} This affine transform
+	 * @param {Point} point the shear factor in x and y direction
+	 * @param {Point} [center] the center for the shear transformation
+	 * @return {Matrix} this affine transform
 	 */
 	/**
 	 * Concatenates this transform with a shear transformation.
 	 *
 	 * @name Matrix#shear
 	 * @function
-	 * @param {Number} hor The horizontal shear factor
-	 * @param {Number} ver The vertical shear factor
-	 * @param {Point} [center] The center for the shear transformation
-	 * @return {Matrix} This affine transform
+	 * @param {Number} hor the horizontal shear factor
+	 * @param {Number} ver the vertical shear factor
+	 * @param {Point} [center] the center for the shear transformation
+	 * @return {Matrix} this affine transform
 	 */
 	shear: function(/* point, center */) {
 		// Do not modify point, center, since that would arguments of which
@@ -278,42 +289,15 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		this._d += point.x * c;
 		if (center)
 			this.translate(center.negate());
+		this._changed();
 		return this;
-	},
-
-	/**
-	 * @return {Boolean} Whether this transform is the identity transform
-	 */
-	isIdentity: function() {
-		return this._a == 1 && this._c == 0 && this._b == 0 && this._d == 1
-				&& this._tx == 0 && this._ty == 0;
-	},
-
-	/**
-	 * Returns whether the transform is invertible. A transform is not
-	 * invertible if the determinant is 0 or any value is non-finite or NaN.
-	 *
-	 * @return {Boolean} Whether the transform is invertible
-	 */
-	isInvertible: function() {
-		return !!this._getDeterminant();
-	},
-
-	/**
-	 * Checks whether the matrix is singular or not. Singular matrices cannot be
-	 * inverted.
-	 *
-	 * @return {Boolean} Whether the matrix is singular
-	 */
-	isSingular: function() {
-		return !this._getDeterminant();
 	},
 
 	/**
 	 * Concatenates an affine transform to this transform.
 	 *
-	 * @param {Matrix} mx The transform to concatenate
-	 * @return {Matrix} This affine transform
+	 * @param {Matrix} mx the transform to concatenate
+	 * @return {Matrix} this affine transform
 	 */
 	concatenate: function(mx) {
 		var a = this._a,
@@ -326,14 +310,15 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		this._d = mx._b * c + mx._d * d;
 		this._tx += mx._tx * a + mx._ty * b;
 		this._ty += mx._tx * c + mx._ty * d;
+		this._changed();
 		return this;
 	},
 
 	/**
 	 * Pre-concatenates an affine transform to this transform.
 	 *
-	 * @param {Matrix} mx The transform to preconcatenate
-	 * @return {Matrix} This affine transform
+	 * @param {Matrix} mx the transform to preconcatenate
+	 * @return {Matrix} this affine transform
 	 */
 	preConcatenate: function(mx) {
 		var a = this._a,
@@ -348,7 +333,36 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		this._d = mx._c * b + mx._d * d;
 		this._tx = mx._a * tx + mx._b * ty + mx._tx;
 		this._ty = mx._c * tx + mx._d * ty + mx._ty;
+		this._changed();
 		return this;
+	},
+
+	/**
+	 * @return {Boolean} whether this transform is the identity transform
+	 */
+	isIdentity: function() {
+		return this._a === 1 && this._c === 0 && this._b === 0 && this._d === 1
+				&& this._tx === 0 && this._ty === 0;
+	},
+
+	/**
+	 * Returns whether the transform is invertible. A transform is not
+	 * invertible if the determinant is 0 or any value is non-finite or NaN.
+	 *
+	 * @return {Boolean} whether the transform is invertible
+	 */
+	isInvertible: function() {
+		return !!this._getDeterminant();
+	},
+
+	/**
+	 * Checks whether the matrix is singular or not. Singular matrices cannot be
+	 * inverted.
+	 *
+	 * @return {Boolean} whether the matrix is singular
+	 */
+	isSingular: function() {
+		return !this._getDeterminant();
 	},
 
 	/**
@@ -356,8 +370,8 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 *
 	 * @name Matrix#transform
 	 * @function
-	 * @param {Point} point The point to be transformed
-	 * @return {Point} The transformed point
+	 * @param {Point} point the point to be transformed
+	 * @return {Point} the transformed point
 	 */
 	/**
 	 * Transforms an array of coordinates by this matrix and stores the results
@@ -365,28 +379,28 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 *
 	 * @name Matrix#transform
 	 * @function
-	 * @param {Number[]} src The array containing the source points
+	 * @param {Number[]} src the array containing the source points
 	 *        as x, y value pairs
-	 * @param {Number} srcOff The offset to the first point to be transformed
-	 * @param {Number[]} dst The array into which to store the transformed
+	 * @param {Number} srcOffset the offset to the first point to be transformed
+	 * @param {Number[]} dst the array into which to store the transformed
 	 *        point pairs
-	 * @param {Number} dstOff The offset of the location of the first
+	 * @param {Number} dstOffset the offset of the location of the first
 	 *        transformed point in the destination array
-	 * @param {Number} numPts The number of points to tranform
-	 * @return {Number[]} The dst array, containing the transformed coordinates.
+	 * @param {Number} count the number of points to tranform
+	 * @return {Number[]} the dst array, containing the transformed coordinates.
 	 */
-	transform: function(/* point | */ src, srcOff, dst, dstOff, numPts) {
+	transform: function(/* point | */ src, srcOffset, dst, dstOffset, count) {
 		return arguments.length < 5
 			// TODO: Check for rectangle and use _tranformBounds?
 			? this._transformPoint(Point.read(arguments))
-			: this._transformCoordinates(src, srcOff, dst, dstOff, numPts);
+			: this._transformCoordinates(src, srcOffset, dst, dstOffset, count);
 	},
 
 	/**
 	 * A faster version of transform that only takes one point and does not
 	 * attempt to convert it.
 	 */
-	_transformPoint: function(point, dest, dontNotify) {
+	_transformPoint: function(point, dest, _dontNotify) {
 		var x = point.x,
 			y = point.y;
 		if (!dest)
@@ -394,14 +408,15 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		return dest.set(
 			x * this._a + y * this._b + this._tx,
 			x * this._c + y * this._d + this._ty,
-			dontNotify
+			_dontNotify
 		);
 	},
 
-	_transformCoordinates: function(src, srcOff, dst, dstOff, numPts) {
-		var i = srcOff, j = dstOff,
-			srcEnd = srcOff + 2 * numPts;
-		while (i < srcEnd) {
+	_transformCoordinates: function(src, srcOffset, dst, dstOffset, count) {
+		var i = srcOffset,
+			j = dstOffset,
+			max = i + 2 * count;
+		while (i < max) {
 			var x = src[i++],
 				y = src[i++];
 			dst[j++] = x * this._a + y * this._b + this._tx;
@@ -424,7 +439,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 * point and finding the new bounding box to these points. This is not
 	 * really the transformed reactangle!
 	 */
-	_transformBounds: function(bounds, dest, dontNotify) {
+	_transformBounds: function(bounds, dest, _dontNotify) {
 		var coords = this._transformCorners(bounds),
 			min = coords.slice(0, 2),
 			max = coords.slice();
@@ -439,13 +454,13 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		if (!dest)
 			dest = new Rectangle();
 		return dest.set(min[0], min[1], max[0] - min[0], max[1] - min[1],
-				dontNotify);
+				_dontNotify);
 	},
 
 	/**
 	 * Inverse transforms a point and returns the result.
 	 *
-	 * @param {Point} point The point to be transformed
+	 * @param {Point} point the point to be transformed
 	 */
 	inverseTransform: function(/* point */) {
 		return this._inverseTransform(Point.read(arguments));
@@ -462,7 +477,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 				? det : null;
 	},
 
-	_inverseTransform: function(point, dest, dontNotify) {
+	_inverseTransform: function(point, dest, _dontNotify) {
 		var det = this._getDeterminant();
 		if (!det)
 			return null;
@@ -473,7 +488,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		return dest.set(
 			(x * this._d - y * this._b) / det,
 			(y * this._a - x * this._c) / det,
-			dontNotify
+			_dontNotify
 		);
 	},
 
@@ -541,14 +556,14 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 */
 
 	/**
-	 * @return {Number} The shear factor in the x-direction ({@code b}).
+	 * The shear factor in the x-direction ({@code b}).
 	 *
 	 * @name Matrix#shearX
 	 * @type Number
 	 */
 
 	/**
-	 * @return {Number} The shear factor in the y-direction ({@code c}).
+	 * The shear factor in the y-direction ({@code c}).
 	 *
 	 * @name Matrix#shearY
 	 * @type Number
@@ -590,6 +605,13 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		return new Point(this._tx, this._ty);
 	},
 
+	setTranslation: function(/* point */) {
+		var point = Point.read(arguments);
+		this._tx = point.x;
+		this._ty = point.y;
+		this._changed();
+	},
+
 	/**
 	 * The scaling values of the matrix, if it can be decomposed.
 	 *
@@ -599,6 +621,15 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 	 */
 	getScaling: function() {
 		return (this.decompose() || {}).scaling;
+	},
+
+	setScaling: function(/* scale */) {
+		var scaling = this.getScaling();
+		if (scaling != null) {
+			var scale = Point.read(arguments);
+			(this._owner || this).scale(
+					scale.x / scaling.x, scale.y / scaling.y);
+		}
 	},
 
 	/**
@@ -612,12 +643,18 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		return (this.decompose() || {}).rotation;
 	},
 
+	setRotation: function(angle) {
+		var rotation = this.getRotation();
+		if (rotation != null)
+			(this._owner || this).rotate(angle - rotation);
+	},
+
 	/**
 	 * Inverts the transformation of the matrix. If the matrix is not invertible
 	 * (in which case {@link #isSingular()} returns true), {@code null } is
 	 * returned.
 	 *
-	 * @return {Matrix} The inverted matrix, or {@code null }, if the matrix is
+	 * @return {Matrix} the inverted matrix, or {@code null }, if the matrix is
 	 *         singular
 	 */
 	inverted: function() {
@@ -658,6 +695,7 @@ var Matrix = Base.extend(/** @lends Matrix# */{
 		};
 		this['set' + name] = function(value) {
 			this[prop] = value;
+			this._changed();
 		};
 	}, {});
 });

@@ -80,7 +80,7 @@ var HitResult = Base.extend(/** @lends HitResult# */{
 
 	/**
 	 * If the HitResult has a type of 'stroke', 'segment', 'handle-in' or
-	 * 'handle-out', this property refers to the Segment that was hit or that
+	 * 'handle-out', this property refers to the segment that was hit or that
 	 * is closest to the hitResult.location on the curve.
 	 *
 	 * @name HitResult#segment
@@ -105,8 +105,9 @@ var HitResult = Base.extend(/** @lends HitResult# */{
 		 * @private
 		 */
 		getOptions: function(options) {
-			// Use _merged property to not repeatetly call merge in recursion.
-			return options && options._merged ? options : Base.merge({
+			// Use _merged property to not repeatetly merge using new Base in
+			// recursion.
+			return options && options._merged ? options : new Base({
 				// Type of item, for instanceof check: PathItem, TexItem, etc
 				type: null,
 				// Tolerance
@@ -132,7 +133,7 @@ var HitResult = Base.extend(/** @lends HitResult# */{
 				guides: false,
 				// Only hit selected objects
 				selected: false,
-				// Mark as merged, so next time Base.merge isn't called
+				// Mark as merged
 				_merged: true
 			}, options);
 		}

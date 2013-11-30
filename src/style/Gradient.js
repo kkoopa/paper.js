@@ -124,7 +124,7 @@ var Gradient = Base.extend(/** @lends Gradient# */{
 		var stops = [];
 		for (var i = 0, l = this._stops.length; i < l; i++)
 			stops[i] = this._stops[i].clone();
-		return new this.constructor(stops);
+		return new Gradient(stops);
 	},
 
 	/**
@@ -180,8 +180,10 @@ var Gradient = Base.extend(/** @lends Gradient# */{
 	 * @return {Boolean} {@true they are equal}
 	 */
 	equals: function(gradient) {
-		if (gradient && gradient.constructor == this.constructor
-				&& this._stops.length == gradient._stops.length) {
+		if (gradient === this)
+			return true;
+		if (gradient &&  this._class === gradient._class
+				&& this._stops.length === gradient._stops.length) {
 			for (var i = 0, l = this._stops.length; i < l; i++) {
 				if (!this._stops[i].equals(gradient._stops[i]))
 					return false;

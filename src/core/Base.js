@@ -22,16 +22,6 @@ Base.inject(/** @lends Base# */{
 	generics: true,
 
 	/**
-	 * General purpose clone function that delegates cloning to the constructor
-	 * that receives the object to be cloned as the first argument.
-	 * Note: #clone() needs to be overridden in any class that requires other
-	 * cloning behavior.
-	 */
-	clone: function() {
-		return new this.constructor(this);
-	},
-
-	/**
 	 * Renders base objects to strings in object literal notation.
 	 */
 	toString: function() {
@@ -75,10 +65,20 @@ Base.inject(/** @lends Base# */{
 	 */
 	_set: function(props, exclude) {
 		if (props && Base.isPlainObject(props)) {
-			for (var key in props)
-				if (props.hasOwnProperty(key) && key in this
-						&& (!exclude || !exclude[key]))
-					this[key] = props[key];
+			// If props is a filtering object, we need to execute hasOwnProperty
+			// on the original object (it's parent / prototype). See _filtered
+			// inheritance trick in the argument reading code.
+			var orig = props._filtering || props;
+			for (var key in orig) {
+				if (key in this && orig.hasOwnProperty(key)
+						&& (!exclude || !exclude[key])) {
+					var value = props[key];
+					// Due to the _filtered inheritance trick, undefined is used
+					// to mask already consumed named arguments.
+					if (value !== undefined)
+						this[key] = value;
+				}
+			}
 			return true;
 		}
 	},
@@ -106,7 +106,7 @@ Base.inject(/** @lends Base# */{
 		equals: function(obj1, obj2) {
 			function checkKeys(o1, o2) {
 				for (var i in o1)
-					if (o1.hasOwnProperty(i) && typeof o2[i] === 'undefined')
+					if (o1.hasOwnProperty(i) && !o2.hasOwnProperty(i))
 						return false;
 				return true;
 			}
@@ -153,9 +153,9 @@ Base.inject(/** @lends Base# */{
 		 *        or a normal array.
 		 * @param {Number} start the index at which to start reading in the list
 		 * @param {Number} length the amount of elements that can be read
-		 * @param {Object} options {@code options.readNull} controls wether null
+		 * @param {Object} options {@code options.readNull} controls whether null
 		 *        is returned or converted. {@code options.clone} controls
-		 *        wether passed objects should be cloned if they are already
+		 *        whether passed objects should be cloned if they are already
 		 *        provided in the required type
 		 */
 		read: function(list, start, length, options) {
@@ -179,7 +179,7 @@ Base.inject(/** @lends Base# */{
 					list._index = index + 1;
 				return obj && options && options.clone ? obj.clone() : obj;
 			}
-			obj = Base.create(this);
+			obj = Base.create(this.prototype);
 			if (readIndex)
 				obj.__read = true;
 			// If options were provided, pass them on to the constructed object
@@ -217,9 +217,9 @@ Base.inject(/** @lends Base# */{
 		 * @param {Array} list the list to read from, either an arguments object
 		 *        or a normal array.
 		 * @param {Number} start the index at which to start reading in the list
-		 * @param {Object} options {@code options.readNull} controls wether null
+		 * @param {Object} options {@code options.readNull} controls whether null
 		 *        is returned or converted. {@code options.clone} controls
-		 *        wether passed objects should be cloned if they are already
+		 *        whether passed objects should be cloned if they are already
 		 *        provided in the required type
 		 */
 		readAll: function(list, start, options) {
@@ -245,9 +245,23 @@ Base.inject(/** @lends Base# */{
 		 * @param {String} name the property name to read from.
 		 */
 		readNamed: function(list, name, start, length, options) {
-			var value = this.getNamed(list, name);
-			return this.read(value != null ? [value] : list, start, length,
-					options);
+			var value = this.getNamed(list, name),
+				hasObject = value !== undefined;
+			if (hasObject) {
+				// Create a _filtered object that inherits from argument 0, and
+				// override all fields that were already read with undefined.
+				var filtered = list._filtered;
+				if (!filtered) {
+					filtered = list._filtered = Base.create(list[0]);
+					// Point _filtering to the original so Base#_set() can
+					// execute hasOwnProperty on it.
+					filtered._filtering = list[0];
+				}
+				// delete wouldn't work since the masked parent's value would
+				// shine through.
+				filtered[name] = undefined;
+			}
+			return this.read(hasObject ? [value] : list, start, length, options);
 		},
 
 		/**
@@ -262,7 +276,7 @@ Base.inject(/** @lends Base# */{
 				list._hasObject = list.length === 1 && Base.isPlainObject(arg);
 			if (list._hasObject)
 				// Return the whole arguments object if no name is provided.
-				return name ? arg[name] : arg;
+				return name ? arg[name] : list._filtered || arg;
 		},
 
 		/**
@@ -366,46 +380,55 @@ Base.inject(/** @lends Base# */{
 		 * deserializable types through Base.exports, and the values following
 		 * in the array are the arguments to their initialize function.
 		 * Any other value is passed on unmodified.
-		 * The passed data is recoursively traversed and converted, leaves first
+		 * The passed json data is recoursively traversed and converted, leaves
+		 * first
 		 */
-		deserialize: function(obj, data) {
-			var res = obj;
-			// A data side-car to deserialize that can hold any kind of 'global'
-			// data across a deserialization. It's currently just used to hold
-			// dictionary definitions.
-			data = data || {};
-			if (Array.isArray(obj)) {
+		deserialize: function(json, create, _data) {
+			var res = json;
+			// A _data side-car to deserialize that can hold any kind of
+			// 'global' data across a deserialization. It's currently only used
+			// to hold dictionary definitions.
+			_data = _data || {};
+			if (Array.isArray(json)) {
 				// See if it's a serialized type. If so, the rest of the array
 				// are the arguments to #initialize(). Either way, we simply
 				// deserialize all elements of the array.
-				var type = obj[0],
+				var type = json[0],
 					// Handle stored dictionary specially, since we need to
 					// keep is a lookup table to retrieve referenced items from.
 					isDictionary = type === 'dictionary';
 				if (!isDictionary) {
 					// First see if this is perhaps a dictionary reference, and
 					// if so return its definition instead.
-					if (data.dictionary && obj.length == 1 && /^#/.test(type))
-						return data.dictionary[type];
+					if (_data.dictionary && json.length == 1 && /^#/.test(type))
+						return _data.dictionary[type];
 					type = Base.exports[type];
 				}
 				res = [];
 				// Skip first type entry for arguments
-				for (var i = type ? 1 : 0, l = obj.length; i < l; i++)
-					res.push(Base.deserialize(obj[i], data));
+				for (var i = type ? 1 : 0, l = json.length; i < l; i++)
+					res.push(Base.deserialize(json[i], create, _data));
 				if (isDictionary) {
-					data.dictionary = res[0];
+					_data.dictionary = res[0];
 				} else if (type) {
 					// Create serialized type and pass collected arguments to
 					// constructor().
 					var args = res;
-					res = Base.create(type);
-					type.apply(res, args);
+					// If a create method is provided, handle our own 
+					// creation. This is used in #importJSON() to pass
+					// on insert = false to all items except layers.
+					if (create) {
+						res = create(type, args);
+					} else {
+						res = Base.create(type.prototype);
+						type.apply(res, args);
+					}
+					
 				}
-			} else if (Base.isPlainObject(obj)) {
+			} else if (Base.isPlainObject(json)) {
 				res = {};
-				for (var key in obj)
-					res[key] = Base.deserialize(obj[key], data);
+				for (var key in json)
+					res[key] = Base.deserialize(json[key], create, _data);
 			}
 			return res;
 		},
@@ -414,9 +437,34 @@ Base.inject(/** @lends Base# */{
 			return JSON.stringify(Base.serialize(obj, options));
 		},
 
-		importJSON: function(json) {
+		importJSON: function(json, target) {
 			return Base.deserialize(
-					typeof json === 'string' ? JSON.parse(json) : json);
+					typeof json === 'string' ? JSON.parse(json) : json,
+					// Provide our own create function to handle target and
+					// insertion
+					function(type, args) {
+						// If a target is provided and its of the right type,
+						// import right into it.
+						var obj = target && target.constructor === type
+								? target
+								: Base.create(type.prototype),
+							isTarget = obj === target;
+						// Note: We don't set insert false for layers since
+						// we want these to be created on the fly in the active
+						// project into which we're importing (except for if
+						// it's a preexisting target layer).
+						if (args.length === 1 && obj instanceof Item
+								&& (!(obj instanceof Layer) || isTarget)) {
+							var arg = args[0];
+							if (Base.isPlainObject(arg))
+								arg.insert = false;
+						}
+						type.apply(obj, args);
+						// Clear target to only use it once
+						if (isTarget)
+							target = null;
+						return obj;
+					});
 		},
 
 		/**
@@ -452,17 +500,6 @@ Base.inject(/** @lends Base# */{
 					list[i]._index = i;
 				return removed;
 			}
-		},
-
-		/**
-		 * Merge all passed hash objects into a newly creted Base object.
-		 */
-		merge: function() {
-			return Base.each(arguments, function(hash) {
-				Base.each(hash, function(value, key) {
-					this[key] = value;
-				}, this);
-			}, new Base(), true); // Pass true for asArray, as arguments is none
 		},
 
 		/**

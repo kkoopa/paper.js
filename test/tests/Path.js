@@ -126,27 +126,29 @@ test('Is the path deselected after setting a new list of segments?', function() 
 	}, 1);
 });
 
-test('After setting Path#fullySelected=true on an empty path, subsequent segments should be selected', function() {
+test('Setting Path#fullySelected=true on an empty path should only set path#selected=true', function() {
 	var path = new Path();
 	path.fullySelected = true;
 	equals(function() {
 		return path.fullySelected;
-	}, true);
-	path.add([10, 10]);
+	}, false);
 	equals(function() {
-		return path.fullySelected;
-	}, true);
-	equals(function() {
-		return path.firstSegment.selected;
+		return path.selected;
 	}, true);
 });
 
-test('After removing all segments of a fully selected path, it should still be fully selected.', function() {
+test('After removing all segments of a fully selected path, it should still be selected.', function() {
 	var path = new Path([10, 20], [30, 40]);
 	path.fullySelected = true;
+	equals(function() {
+		return path.fullySelected;
+	}, true);
 	path.removeSegments();
 	equals(function() {
 		return path.fullySelected;
+	}, false);
+	equals(function() {
+		return path.selected;
 	}, true);
 });
 
@@ -164,7 +166,7 @@ test('After simplifying a path using #simplify(), the path should stay fullySele
 	var path = new Path();
 	for (var i = 0; i < 30; i++) {
 		path.add(i * 10, 10);
-	};
+	}
 	path.fullySelected = true;
 	equals(function() {
 		return path.selected;
@@ -175,26 +177,7 @@ test('After simplifying a path using #simplify(), the path should stay fullySele
 	equals(function() {
 		return path.selected;
 	}, true);
-	equals(function() {
-		return path.fullySelected;
-	}, true);
-});
 
-test('After simplifying a path using #simplify(), the path should stay fullySelected', function() {
-	var path = new Path();
-	for (var i = 0; i < 30; i++) {
-		path.add(i * 10, 10);
-	};
-	path.fullySelected = true;
-	equals(function() {
-		return path.selected;
-	}, true);
-
-	path.simplify();
-
-	equals(function() {
-		return path.selected;
-	}, true);
 	equals(function() {
 		return path.fullySelected;
 	}, true);
@@ -206,7 +189,7 @@ test('After cloning a selected item, it should be added to the Project#selectedI
 	var copy = path.clone();
 
 	equals(function() {
-		return paper.project.selectedItems.length
+		return paper.project.selectedItems.length;
 	}, 2);
 });
 
@@ -214,7 +197,7 @@ test('After simplifying a path using #simplify(), the path should stay selected'
 	var path = new Path();
 	for (var i = 0; i < 30; i++) {
 		path.add(i * 10, (i % 2 ? 20 : 40));
-	};
+	}
 	path.selected = true;
 	path.simplify();
 	equals(function() {
@@ -226,7 +209,7 @@ test('After smoothing a path using #smooth(), the path should stay fullySelected
 	var path = new Path();
 	for (var i = 0; i < 30; i++) {
 		path.add(i * 10, (i % 2 ? 20 : 40));
-	};
+	}
 	path.fullySelected = true;
 	path.smooth();
 	equals(function() {
@@ -238,7 +221,7 @@ test('After smoothing a path using #smooth(), the path should stay selected', fu
 	var path = new Path();
 	for (var i = 0; i < 30; i++) {
 		path.add(i * 10, (i % 2 ? 20 : 40));
-	};
+	}
 	path.selected = true;
 	path.smooth();
 	equals(function() {

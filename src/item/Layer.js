@@ -43,8 +43,9 @@ var Layer = Group.extend(/** @lends Layer# */{
 	 * {@link Project#layers} array. The newly created layer will be activated,
 	 * so all newly created items will be placed within it.
 	 *
-	 * @param {Object} object An object literal containing properties to
-	 * be set on the layer.
+	 * @name Layer#initialize
+	 * @param {Object} object an object literal containing the properties to be
+	 * set on the layer.
 	 *
 	 * @example {@paperscript}
 	 * var path = new Path([100, 100], [100, 200]);
@@ -58,12 +59,19 @@ var Layer = Group.extend(/** @lends Layer# */{
 	 * 	position: view.center
 	 * });
 	 */
-	initialize: function Layer(/* items */) {
-		this._project = paper.project;
-		// Push it onto project.layers and set index:
-		this._index = this._project.layers.push(this) - 1;
-		Group.apply(this, arguments);
-		this.activate();
+	initialize: function Layer(arg) {
+		var props = Base.isPlainObject(arg)
+				? new Base(arg) // clone so we can add insert = false
+				: { children: Array.isArray(arg) ? arg : arguments },
+			insert = props.insert;
+		// Call the group constructor but don't insert yet!
+		props.insert = false;
+		Group.call(this, props);
+		if (insert || insert === undefined) {
+			this._project.addChild(this);
+			// When inserted, also activate the layer by default.
+			this.activate();
+		}
 	},
 
 	/**
@@ -118,7 +126,8 @@ var Layer = Group.extend(/** @lends Layer# */{
 	_insert: function _insert(above, item, _preserve) {
 		// If the item is a layer and contained within Project#layers, use
 		// our own version of move().
-		if (item instanceof Layer && !item._parent && this._remove(true)) {
+		if (item instanceof Layer && !item._parent) {
+			this._remove(true);
 			Base.splice(item._project.layers, [this],
 					item._index + (above ? 1 : 0), 0);
 			this._setProject(item._project);

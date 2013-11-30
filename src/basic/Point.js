@@ -223,7 +223,7 @@ var Point = Base.extend(/** @lends Point# */{
 	},
 
 	/**
-	 * @return {String} A string representation of the point.
+	 * @return {String} a string representation of the point
 	 */
 	toString: function() {
 		var f = Formatter.instance;
@@ -234,8 +234,7 @@ var Point = Base.extend(/** @lends Point# */{
 		var f = options.formatter;
 		// For speed reasons, we directly call formatter.number() here, instead
 		// of converting array through Base.serialize() which makes a copy.
-		return [f.number(this.x),
-				f.number(this.y)];
+		return [f.number(this.x), f.number(this.y)];
 	},
 
 	/**
@@ -434,7 +433,7 @@ var Point = Base.extend(/** @lends Point# */{
 	 * is not modified!
 	 *
 	 * @param {Matrix} matrix
-	 * @return {Point} The transformed point
+	 * @return {Point} the transformed point
 	 */
 	transform: function(matrix) {
 		return matrix ? matrix._transformPoint(this) : this;
@@ -505,8 +504,8 @@ var Point = Base.extend(/** @lends Point# */{
 	 * The object itself is not modified!
 	 *
 	 * @param {Number} [length=1] The length of the normalized vector
-	 * @return {Point} The normalized vector of the vector that is represented
-	 *                 by this point's coordinates.
+	 * @return {Point} the normalized vector of the vector that is represented
+	 *                 by this point's coordinates
 	 */
 	normalize: function(length) {
 		if (length === undefined)
@@ -532,9 +531,6 @@ var Point = Base.extend(/** @lends Point# */{
 	/**
 	 * The vector's angle in degrees, measured from the x-axis to the vector.
 	 *
-	 * The angle is unsigned, no information about rotational direction is
-	 * given.
-	 *
 	 * @name Point#getAngle
 	 * @bean
 	 * @type Number
@@ -545,6 +541,10 @@ var Point = Base.extend(/** @lends Point# */{
 	},
 
 	setAngle: function(angle) {
+		// We store a reference to _angle internally so we still preserve it
+		// when the vector's length is set to zero, and then anything else.
+		// Note that we cannot rely on it if x and y are something else than 0,
+		// since updating x / y does not automatically change _angle!
 		angle = this._angle = angle * Math.PI / 180;
 		if (!this.isZero()) {
 			var length = this.getLength();
@@ -570,9 +570,6 @@ var Point = Base.extend(/** @lends Point# */{
 	/**
 	 * The vector's angle in radians, measured from the x-axis to the vector.
 	 *
-	 * The angle is unsigned, no information about rotational direction is
-	 * given.
-	 *
 	 * @name Point#getAngleInRadians
 	 * @bean
 	 * @type Number
@@ -580,9 +577,13 @@ var Point = Base.extend(/** @lends Point# */{
 	getAngleInRadians: function(/* point */) {
 		// Hide parameters from Bootstrap so it injects bean too
 		if (arguments[0] === undefined) {
-			if (this._angle == null)
-				this._angle = Math.atan2(this.y, this.x);
-			return this._angle;
+			return this.isZero()
+					// Return the preseved angle in case the vector has no
+					// length, and update the internal _angle in case the
+					// vector has a length. See #setAngle() for more
+					// explanations.
+					? this._angle || 0
+					: this._angle = Math.atan2(this.y, this.x);
 		} else {
 			var point = Point.read(arguments),
 				div = this.getLength() * point.getLength();
@@ -853,7 +854,7 @@ var Point = Base.extend(/** @lends Point# */{
 		 * @static
 		 * @param {Point} point1
 		 * @param {Point} point2
-		 * @returns {Point} The newly created point object
+		 * @returns {Point} the newly created point object
 		 *
 		 * @example
 		 * var point1 = new Point(10, 100);
@@ -877,7 +878,7 @@ var Point = Base.extend(/** @lends Point# */{
 		 * @static
 		 * @param {Point} point1
 		 * @param {Point} point2
-		 * @returns {Point} The newly created point object
+		 * @returns {Point} the newly created point object
 		 *
 		 * @example
 		 * var point1 = new Point(10, 100);
@@ -898,7 +899,7 @@ var Point = Base.extend(/** @lends Point# */{
 		 * Returns a point object with random {@link #x} and {@link #y} values
 		 * between {@code 0} and {@code 1}.
 		 *
-		 * @returns {Point} The newly created point object
+		 * @returns {Point} the newly created point object
 		 * @static
 		 *
 		 * @example
@@ -939,10 +940,10 @@ var LinkedPoint = Point.extend({
 		this._setter = setter;
 	},
 
-	set: function(x, y, dontNotify) {
+	set: function(x, y, _dontNotify) {
 		this._x = x;
 		this._y = y;
-		if (!dontNotify)
+		if (!_dontNotify)
 			this._owner[this._setter](this);
 		return this;
 	},

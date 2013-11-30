@@ -37,10 +37,11 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 
 	// TODO: Add arguments to define pages
 	/**
-	 * Creates a Paper.js project.
+	 * Creates a Paper.js project containing one empty {@link Layer}, referenced
+	 * by {@link Project#activeLayer}.
 	 *
-	 * When working with PaperScript, a project is automatically created for us
-	 * and the {@link PaperScope#project} variable points to it.
+	 * Note that when working with PaperScript, a project is automatically
+	 * created for us and the {@link PaperScope#project} variable points to it.
 	 *
 	 * @param {View|HTMLCanvasElement} view Either a view object or an HTML
 	 * Canvas element that should be wrapped in a newly created view.
@@ -89,6 +90,18 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 		for (var i = this.layers.length - 1; i >= 0; i--)
 			this.layers[i].remove();
 		this.symbols = [];
+	},
+
+	/**
+	 * Specifies whether the project has any content or not. Note that since
+	 * projects by default are created with one empty layer, this returns alos
+	 * {@code true} if that layer exists but is itself empty.
+	 *
+	 * @return Boolean
+	 */
+	isEmpty: function() {
+		return this.layers.length <= 1
+			&& (!this.activeLayer || this.activeLayer.isEmpty());
 	},
 
 	/**
@@ -154,6 +167,29 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 		return this._index;
 	},
 
+	// Helper function used in Item#copyTo and Layer#initialize
+	// It's called the same as Item#addChild so Item#copyTo does not need to
+	// make the distinction.
+	// TODO: Consider private function with alias in Item?
+	addChild: function(child) {
+		if (child instanceof Layer) {
+			Base.splice(this.layers, [child]);
+			// Also activate this layer if there was none before
+			if (!this.activeLayer)
+				this.activeLayer = child;
+		} else if (child instanceof Item) {
+			// Anything else than layers needs to be added to a layer first
+			(this.activeLayer
+				// NOTE: If there is no layer and this project is not the active
+				// one, passing insert: false and calling addChild on the
+				// project will handle it correctly.
+				|| this.addChild(new Layer({ insert: false }))).addChild(child);
+		} else {
+			child = null;
+		}
+		return child;
+	},
+
 	/**
 	 * The selected items contained within the project.
 	 *
@@ -168,7 +204,7 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 		var items = [];
 		for (var id in this._selectedItems) {
 			var item = this._selectedItems[id];
-			if (item._drawCount === this._drawCount)
+			if (item.isInserted())
 				items.push(item);
 		}
 		return items;
@@ -177,6 +213,7 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 	// DOCS: Project#options
 	/**
 	 * <b>options.handleSize:</b> 
+	 *
 	 * <b>options.hitTolerance:</b>
 	 *
 	 * @name Project#options
@@ -184,19 +221,17 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 	 */
 
 	// TODO: Implement setSelectedItems?
-
 	_updateSelection: function(item) {
+		var id = item._id,
+			selectedItems = this._selectedItems;
 		if (item._selected) {
-			this._selectedItemCount++;
-			this._selectedItems[item._id] = item;
-			// Make sure the item is considered selected right away if it is
-			// part of the DOM, even before it's getting drawn for the first
-			// time.
-			if (item.isInserted())
-				item._drawCount = this._drawCount;
-		} else {
+			if (selectedItems[id] !== item) {
+				this._selectedItemCount++;
+				selectedItems[id] = item;
+			}
+		} else if (selectedItems[id] === item) {
 			this._selectedItemCount--;
-			delete this._selectedItems[item._id];
+			delete selectedItems[id];
 		}
 	},
 
@@ -204,52 +239,55 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 	 * Selects all items in the project.
 	 */
 	selectAll: function() {
-		for (var i = 0, l = this.layers.length; i < l; i++)
-			this.layers[i].setSelected(true);
+		var layers = this.layers;
+		for (var i = 0, l = layers.length; i < l; i++)
+			layers[i].setFullySelected(true);
 	},
 
 	/**
 	 * Deselects all selected items in the project.
 	 */
 	deselectAll: function() {
-		for (var i in this._selectedItems)
-			this._selectedItems[i].setSelected(false);
+		var selectedItems = this._selectedItems;
+		for (var i in selectedItems)
+			selectedItems[i].setFullySelected(false);
 	},
 
 	/**
 	 * Perform a hit test on the items contained within the project at the
 	 * location of the specified point.
 	 * 
-	 * The optional options object allows you to control the specifics of the
-	 * hit test and may contain a combination of the following values:
-	 * <b>options.tolerance:</b> {@code Number} - The tolerance of the hit test
-	 * in points.
+	 * The options object allows you to control the specifics of the hit test
+	 * and may contain a combination of the following values:
+	 * <b>options.tolerance:</b> {@code Number} – the tolerance of the hit test
+	 * in points, can also be controlled through
+	 * {@link Project#options}{@code .hitTolerance}.
 	 * <b>options.type:</b> Only hit test again a certain item
 	 * type: {@link PathItem}, {@link Raster}, {@link TextItem}, etc.
-	 * <b>options.fill:</b> {@code Boolean} - Hit test the fill of items.
-	 * <b>options.stroke:</b> {@code Boolean} - Hit test the curves of path
+	 * <b>options.fill:</b> {@code Boolean} – hit test the fill of items.
+	 * <b>options.stroke:</b> {@code Boolean} – hit test the curves of path
 	 * items, taking into account stroke width.
-	 * <b>options.segments:</b> {@code Boolean} - Hit test for
+	 * <b>options.segments:</b> {@code Boolean} – hit test for
 	 * {@link Segment#point} of {@link Path} items.
-	 * <b>options.handles:</b> {@code Boolean} - Hit test for the handles
+	 * <b>options.handles:</b> {@code Boolean} – hit test for the handles
 	 * ({@link Segment#handleIn} / {@link Segment#handleOut}) of path segments.
-	 * <b>options.ends:</b> {@code Boolean} - Only hit test for the first or
+	 * <b>options.ends:</b> {@code Boolean} – only hit test for the first or
 	 * last segment points of open path items.
-	 * <b>options.bounds:</b> {@code Boolean} - Hit test the corners and
+	 * <b>options.bounds:</b> {@code Boolean} – hit test the corners and
 	 * side-centers of the bounding rectangle of items ({@link Item#bounds}).
-	 * <b>options.center:</b> {@code Boolean} - Hit test the
+	 * <b>options.center:</b> {@code Boolean} – hit test the
 	 * {@link Rectangle#center} of the bounding rectangle of items
 	 * ({@link Item#bounds}).
-	 * <b>options.guides:</b> {@code Boolean} - Hit test items that have
+	 * <b>options.guides:</b> {@code Boolean} – hit test items that have
 	 * {@link Item#guide} set to {@code true}.
-	 * <b>options.selected:</b> {@code Boolean} - Only hit selected items.
+	 * <b>options.selected:</b> {@code Boolean} – only hit selected items.
 	 *
 	 * @param {Point} point The point where the hit test should be performed
 	 * @param {Object} [options={ fill: true, stroke: true, segments: true,
 	 * tolerance: true }]
-	 * @return {HitResult} A hit result object that contains more
+	 * @return {HitResult} a hit result object that contains more
 	 * information about what exactly was hit or {@code null} if nothing was
-	 * hit.
+	 * hit
 	 */
 	hitTest: function(point, options) {
 		// We don't need to do this here, but it speeds up things since we won't
@@ -262,13 +300,42 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 			if (res) return res;
 		}
 		return null;
-	},
+	}
+}, new function() {
+	function getItems(project, match, list) {
+		var layers = project.layers,
+			items = list && [];
+		for (var i = 0, l = layers.length; i < l; i++) {
+			var res = layers[i][list ? 'getItems' : 'getItem'](match);
+			if (list) {
+				items.push.apply(items, res);
+			} else if (res)
+				return res;
+		}
+		return list ? items : null;
+	}
 
+	return /** @lends Project# */{
+		// DOCS: Project#getItems
+		getItems: function(match) {
+			return getItems(this, match, true);
+		},
+
+		// DOCS: Project#getItems
+		getItem: function(match) {
+			return getItems(this, match, false);
+		}
+	};
+}, /** @lends Project# */{
 	/**
-	 * {@grouptitle Import / Export to JSON & SVG}
+	 * {@grouptitle Importing / Exporting JSON and SVG}
 	 *
 	 * Exports (serializes) the project with all its layers and child items to
 	 * a JSON data string.
+	 *
+	 * The options object offers control over some aspects of the SVG export:
+	 * <b>options.precision:</b> {@code Number} – the amount of fractional
+	 * digits in numbers used in JSON data.
 	 *
 	 * @name Project#exportJSON
 	 * @function
@@ -277,35 +344,54 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 	 */
 
 	/**
-	 * Imports (deserializes) the stored JSON data into the project. Note that
-	 * the project is not cleared first. You can call {@link Project#clear()} to
-	 * do so.
+	 * Imports (deserializes) the stored JSON data into the project.
+	 * Note that the project is not cleared first. You can call
+	 * {@link Project#clear()} to do so.
 	 *
 	 * @param {String} json the JSON data to import from.
 	 */
 	importJSON: function(json) {
 		this.activate();
-		return Base.importJSON(json);
+		// Provide the activeLayer as a possible target for layers, but only if
+		// it's empty.
+		var layer = this.activeLayer;
+		return Base.importJSON(json, layer && layer.isEmpty() && layer);
 	},
 
 	/**
 	 * Exports the project with all its layers and child items as an SVG DOM,
 	 * all contained in one top level SVG group node.
 	 *
+	 * The options object offers control over some aspects of the SVG export:
+	 * <b>options.asString:</b> {@code Boolean} – wether a SVG node or a String
+	 * is to be returned.
+	 * <b>options.precision:</b> {@code Number} – the amount of fractional
+	 * digits in numbers used in SVG data.
+	 * <b>options.matchShapes:</b> {@code Boolean} – wether imported path
+	 * items should tried to be converted to shape items, if their geometries
+	 * match.
+	 *
 	 * @name Project#exportSVG
 	 * @function
-	 * @param {Object} [options={ asString: false, precision: 5 }] the export
-	 *        options.
+	 * @param {Object} [options={ asString: false, precision: 5,
+	 * matchShapes: false }] the export options.
 	 * @return {SVGSVGElement} the project converted to an SVG node
 	 */
 
 	/**
-	 * Converts the SVG node and all its child nodes into Paper.js items and
-	 * adds them to the active layer of this project.
+	 * Converts the provided SVG content into Paper.js items and adds them to
+	 * the active layer of this project.
+	 * Note that the project is not cleared first. You can call
+	 * {@link Project#clear()} to do so.
+	 *
+	 * The options object offers control over some aspects of the SVG import:
+	 * <b>options.expandShapes:</b> {@code Boolean} – wether imported shape
+	 * items should be expanded to path items.
 	 *
 	 * @name Project#importSVG
 	 * @function
-	 * @param {SVGSVGElement} node the SVG node to import
+	 * @param {SVGSVGElement|String} svg the SVG content to import
+	 * @param {Object} [options={ expandShapes: false }] the import options
 	 * @return {Item} the imported Paper.js parent item
 	 */
 
@@ -333,17 +419,25 @@ var Project = PaperScopeItem.extend(/** @lends Project# */{
 	 * @type Symbol[]
 	 */
 
-	draw: function(ctx, matrix) {
+	draw: function(ctx, matrix, ratio) {
+		// Increase the drawCount before the draw-loop. After that, items that
+		// are visible will have their drawCount set to the new value.
 		this._drawCount++;
 		ctx.save();
 		matrix.applyToContext(ctx);
-		// Use Base.merge() so we can use param.extend() to easily override
+		// Use new Base() so we can use param.extend() to easily override
 		// values
-		var param = Base.merge({
+		var param = new Base({
 			offset: new Point(0, 0),
+			ratio: ratio,
 			// A stack of concatenated matrices, to keep track of the current
 			// global matrix, since Canvas is not able tell us (yet).
-			transforms: [matrix]
+			transforms: [matrix],
+			// Tell the drawing routine that we want to track nested matrices
+			// in param.transforms, and that we want it to set _globalMatrix
+			// as used below. Item#rasterize() and Raster#getAverageColor() do
+			// not need to set this.
+			trackTransforms: true
 		});
 		for (var i = 0, l = this.layers.length; i < l; i++)
 			this.layers[i].draw(ctx, param);

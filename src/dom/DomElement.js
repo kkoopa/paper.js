@@ -95,7 +95,9 @@ var DomElement = new function() {
 		},
 
 		getStyles: function(el) {
-			var view = el && el.ownerDocument.defaultView;
+			// If el is a document (nodeType == 9), use it directly
+			var doc = el && el.nodeType !== 9 ? el.ownerDocument : el,
+				view = doc && doc.defaultView;
 			return view && view.getComputedStyle(el, '');
 		},
 
@@ -195,6 +197,19 @@ var DomElement = new function() {
 			// which always starts at 0, 0
 			return !this.isInvisible(el) && this.getViewportBounds(el).intersects(
 					this.getBounds(el, true));
+		},
+
+		/**
+		 * Gets the given property from the element, trying out all browser
+		 * prefix variants.
+		 */
+		getPrefixValue: function(el, name) {
+			var value = el[name],
+				prefixes = ['webkit', 'moz', 'ms', 'o'],
+				suffix = name[0].toUpperCase() + name.substring(1);
+			for (var i = 0; i < 4 && value == null; i++)
+				value = el[prefixes[i] + suffix];
+			return value;
 		}
 	};
 };

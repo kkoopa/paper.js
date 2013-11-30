@@ -39,6 +39,41 @@ test('Path#contains() (Regular Polygon)', function() {
 	testPoint(path, new Point(10, 20), false);
 });
 
+test('Path#contains() (Circle Contours)', function() {
+	var path = new Path.Circle({
+		center: [100, 100],
+		radius: 50,
+		fillColor: 'blue',
+	});
+
+	testPoint(path, path.bounds.topCenter, true);
+	testPoint(path, path.bounds.leftCenter, true);
+	testPoint(path, path.bounds.rightCenter, true);
+	testPoint(path, path.bounds.bottomCenter, true);
+	testPoint(path, path.bounds.topLeft, false);
+	testPoint(path, path.bounds.topRight, false);
+	testPoint(path, path.bounds.bottomLeft, false);
+	testPoint(path, path.bounds.bottomRight, false);
+});
+
+test('Path#contains() (Transformed Circle Contours)', function() {
+	var path = new Path.Circle({
+		center: [200, 200],
+		radius: 50,
+		fillColor: 'blue',
+	});
+	path.translate(100, 100);
+
+	testPoint(path, path.bounds.topCenter, true);
+	testPoint(path, path.bounds.leftCenter, true);
+	testPoint(path, path.bounds.rightCenter, true);
+	testPoint(path, path.bounds.bottomCenter, true);
+	testPoint(path, path.bounds.topLeft, false);
+	testPoint(path, path.bounds.topRight, false);
+	testPoint(path, path.bounds.bottomLeft, false);
+	testPoint(path, path.bounds.bottomRight, false);
+});
+
 test('Path#contains() (Round Rectangle)', function() {
 	var rectangle = new Rectangle({
 	    point: new Point(0, 0),
@@ -140,3 +175,17 @@ test('Path#contains() (Rotated Rectangle Contours)', function() {
 	    testPoint(path, curves[i].getPoint(0.5), true);
 	}
 });
+
+test('Path#contains() (touching stationary point with changing orientation)', function() {
+	var path = new Path({
+		segments: [
+			new Segment([100, 100]),
+			new Segment([200, 200], [-50, 0], [50, 0]),
+			new Segment([300, 300]),
+			new Segment([300, 100])
+		],
+		closed: true
+	});
+
+	testPoint(path, new Point(200, 200), true);
+})

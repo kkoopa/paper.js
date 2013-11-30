@@ -78,6 +78,7 @@ var Style = Base.extend(new function() {
 		miterLimit: 10,
 		dashOffset: 0,
 		dashArray: [],
+		windingRule: 'nonzero',
 		// Shadows
 		shadowColor: undefined,
 		shadowBlur: 0,
@@ -107,7 +108,7 @@ var Style = Base.extend(new function() {
 		fields = {
 			_defaults: defaults,
 			// Override default fillColor for text items
-			_textDefaults: Base.merge(defaults, {
+			_textDefaults: new Base(defaults, {
 				fillColor: new Color() // black
 			})
 		};
@@ -141,8 +142,14 @@ var Style = Base.extend(new function() {
 					if (isColor) {
 						if (old)
 							delete old._owner;
-						if (value && value.constructor === Color)
+						if (value && value.constructor === Color) {
+							// Clone color if it already has an owner.
+							// NOTE: If value is not a Color, it is only
+							// converted and cloned in the getter further down.
+							if (value._owner)
+								value = value.clone();
 							value._owner = this._item;
+						}
 					}
 					// Note: We do not convert the values to Colors in the 
 					// setter. This only happens once the getter is called.
@@ -235,6 +242,29 @@ var Style = Base.extend(new function() {
 		}
 	},
 
+	equals: function(style) {
+		return style === this || style && this._class === style._class
+				&& Base.equals(this._values, style._values)
+				|| false;
+	},
+
+	// DOCS: Style#hasFill()
+	hasFill: function() {
+		return !!this.getFillColor();
+	},
+
+	// DOCS: Style#hasStroke()
+	hasStroke: function() {
+		return !!this.getStrokeColor() && this.getStrokeWidth() > 0;
+	},
+
+	// DOCS: Style#hasShadow()
+	hasShadow: function() {
+		return !!this.getShadowColor() && this.getShadowBlur() > 0;
+	},
+
+	// Overrides
+
 	getLeading: function getLeading() {
 		// Override leading to return fontSize * 1.2 by default.
 		var leading = getLeading.base.call(this);
@@ -243,8 +273,12 @@ var Style = Base.extend(new function() {
 
 	getFontStyle: function() {
 		var size = this.getFontSize();
-		return (/[a-z]/i.test(size) ? size + ' ' : size + 'px ')
-				+ this.getFont();
+		// To prevent an obscure iOS 7 crash, we have to convert the size to a
+		// string first before passing it to the regular expression.
+		// This nonsensical statement would also prevent the bug, prooving that
+		// the issue is not the regular expression itself, but something deeper
+		// down in the optimizer: if (size === 0) size = 0;
+		return size + (/[a-z]/i.test(size + '') ? ' ' : 'px ') + this.getFont();
 	}
 
 	// DOCS: why isn't the example code showing up?
@@ -430,18 +464,19 @@ var Style = Base.extend(new function() {
 	 * @type Color
 	 *
 	 * @example {@paperscript}
-	 * // Setting the shadow color of a path to black:
+	 * // Creating a circle with a black shadow:
 	 *
-	 * // Create a circle shaped path at { x: 80, y: 50 }
-	 * // with a radius of 35:
-	 * var circle = new Path.Circle(new Point(80, 50), 35);
-	 *
-	 * // Set the shadow color of the circle to RGB black:
-	 * circle.shadowColor = new Color(0, 0, 0);
-	 *
-	 * // Set the shadow blur, offset to { x: 10, y: 10 }
-	 * circle.shadowBlur = 10;
-	 * circle.shadowOffset = new Poit(10, 10);
+	 * var circle = new Path.Circle({
+	 *     center: [80, 50],
+	 *     radius: 35,
+	 *     fillColor: 'white',
+	 *     // Set the shadow color of the circle to RGB black:
+	 *     shadowColor: new Color(0, 0, 0),
+	 *     // Set the shadow blur radius to 12:
+	 *     shadowBlur: 12,
+	 *     // Offset the shadow by { x: 5, y: 5 }
+	 *     shadowOffset: new Point(5, 5)
+	 * });
 	 */
 
 	/**

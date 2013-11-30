@@ -21,20 +21,23 @@
 paper.PaperScope.prototype.PaperScript = (function(root) {
 	var Base = paper.Base,
 		PaperScope = paper.PaperScope,
+		// For local reference, for now only when setting lineNumberBase on
+		// Firefox.
+		PaperScript,
 		// Locally turn of exports and define for inlined acorn / esprima.
 		// Just declaring the local vars is enough, as they will be undefined.
 		exports, define,
 		// The scope into which the library is loaded.
 		scope = this;
-/*#*/ if (options.version == 'dev') {
+/*#*/ if (__options.version == 'dev') {
 	// As the above inclusion loads code into the root scope during dev,
 	// set scope to root, so we can find the library.
 	scope = root;
-/*#*/ } // options.version == 'dev'
-/*#*/ if (options.parser == 'acorn') {
-/*#*/ include('../../components/acorn/acorn.min.js', { exports: false });
-/*#*/ } else if (options.parser == 'esprima') {
-/*#*/ include('../../components/esprima/esprima.min.js', { exports: false });
+/*#*/ } // __options.version == 'dev'
+/*#*/ if (__options.parser == 'acorn') {
+/*#*/ include('../../bower_components/acorn/acorn.min.js', { exports: false });
+/*#*/ } else if (__options.parser == 'esprima') {
+/*#*/ include('../../bower_components/esprima/esprima.min.js', { exports: false });
 /*#*/ }
 
 	// Operators to overload
@@ -56,9 +59,9 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 		'+': null
 	};
 
-	// Add hidden math functions to Point, Size and Color.
+	// Inject underscored math functions as aliases to Point, Size and Color.
 	var fields = Base.each(
-		'add,subtract,multiply,divide,modulo,negate'.split(','),
+		['add', 'subtract', 'multiply', 'divide', 'modulo', 'negate'],
 		function(name) {
 			this['_' + name] = '#' + name;
 		}, 
@@ -108,8 +111,8 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 	 *
 	 * @name PaperScript.compile
 	 * @function
-	 * @param {String} code The PaperScript code.
-	 * @return {String} The compiled PaperScript as JavaScript code.
+	 * @param {String} code The PaperScript code
+	 * @return {String} the compiled PaperScript as JavaScript code
 	 */
 	function compile(code) {
 		// Use Acorn or Esprima to translate the code into an AST structure
@@ -161,11 +164,8 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 		}
 
 		// Recursively walks the AST and replaces the code of certain nodes
-		function walkAst(node) {
-			// array[i++] is a MemberExpression with computed = true.
-			// We cannot replace that with array[_$_(i, "+", 1)], as it would
-			// break the code, so let's bail out.
-			if (!node || node.type === 'MemberExpression' && node.computed)
+		function walkAST(node, parent) {
+			if (!node)
 				return;
 			for (var key in node) {
 				if (key === 'range')
@@ -173,11 +173,11 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 				var value = node[key];
 				if (Array.isArray(value)) {
 					for (var i = 0, l = value.length; i < l; i++)
-						walkAst(value[i]);
+						walkAST(value[i], node);
 				} else if (value && typeof value === 'object') {
 					// We cannot use Base.isPlainObject() for these since
 					// Acorn.js uses its own internal prototypes now.
-					walkAst(value);
+					walkAST(value, node);
 				}
 			}
 			switch (node && node.type) {
@@ -200,7 +200,17 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 				}
 				break;
 			case 'UpdateExpression':
-				if (!node.prefix) {
+				if (!node.prefix && !(parent && (
+						// We need to filter out parents that are comparison
+						// operators, e.g. for situations like if (++i < 1),
+						// as we can't replace that with if (_$_(i, "+", 1) < 1)
+						// Match any operator beginning with =, !, < and >.
+						parent.type === 'BinaryExpression'
+							&& /^[=!<>]/.test(parent.operator)
+						// array[i++] is a MemberExpression with computed = true
+						// We can't replace that with array[_$_(i, "+", 1)].
+						|| parent.type === 'MemberExpression'
+							&& parent.computed))) {
 					var arg = getCode(node.argument);
 					replaceCode(node, arg + ' = _$_(' + arg + ', "'
 							+ node.operator[0] + '", 1)');
@@ -217,10 +227,10 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 			}
 		}
 		// Now do the parsing magic
-/*#*/ if (options.parser == 'acorn') {
-		walkAst(scope.acorn.parse(code, { ranges: true }));
-/*#*/ } else if (options.parser == 'esprima') {
-		walkAst(scope.esprima.parse(code, { range: true }));
+/*#*/ if (__options.parser == 'acorn') {
+		walkAST(scope.acorn.parse(code, { ranges: true }));
+/*#*/ } else if (__options.parser == 'esprima') {
+		walkAST(scope.esprima.parse(code, { range: true }));
 /*#*/ }
 		return code;
 	}
@@ -231,9 +241,9 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 	 *
 	 * @name PaperScript.evaluate
 	 * @function
-	 * @param {String} code The PaperScript code.
-	 * @param {PaperScript} scope The scope in which the code is executed.
-	 * @return {Object} The result of the code evaluation.
+	 * @param {String} code The PaperScript code
+	 * @param {PaperScript} scope The scope in which the code is executed
+	 * @return {Object} the result of the code evaluation
 	 */
 	function evaluate(code, scope) {
 		// Set currently active scope.
@@ -251,7 +261,44 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 				var onActivate, onDeactivate, onEditOptions,
 					onMouseDown, onMouseUp, onMouseDrag, onMouseMove,
 					onKeyDown, onKeyUp, onFrame, onResize;
-				res = eval(compile(code));
+				code = compile(code);
+/*#*/ if (__options.environment == 'browser') {
+				if (root.InstallTrigger) { // Firefox
+					// On Firefox, all error numbers inside evaled code are
+					// relative to the line where the eval happened. Totally
+					// silly, but that's how it is. So we're calculating the
+					// base of lineNumbers, to remove it again from reported
+					// errors. Luckily, Firefox is the only browser where we can
+					// define the lineNumber for exceptions.
+					var handle = PaperScript.handleException;
+					if (!handle) {
+						handle = PaperScript.handleException = function(e) {
+							throw e.lineNumber >= lineNumber
+									? new Error(e.message, e.fileName,
+										e.lineNumber - lineNumber)
+									: e;
+						}
+						// We're using a crazy hack to detect wether the library
+						// is minified or not: By generating a second error on
+						// the 2nd line and using the difference in line numbers
+						// to calculate the offset to the eval, it works in both
+						// casees.
+						var lineNumber = new Error().lineNumber;
+						lineNumber += (new Error().lineNumber - lineNumber) * 3;
+					}
+					try {
+						// Add a semi-colon at the start so Firefox doesn't
+						// swallow empty lines and shift error messages.
+						res = eval(';' + code);
+					} catch (e) {
+						handle(e);
+					}
+				} else {
+					res = eval(code);
+				}
+/*#*/ } else { // !__options.environment == 'browser'
+				res = eval(code);
+/*#*/ } // !__options.environment == 'browser'
 				// Only look for tool handlers if something resembling their
 				// name is contained in the code.
 				if (/on(?:Key|Mouse)(?:Up|Down|Move|Drag)/.test(code)) {
@@ -272,7 +319,8 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 						size: view.size,
 						delta: new Point()
 					});
-					view.setOnFrame(onFrame);
+					if (onFrame)
+						view.setOnFrame(onFrame);
 					// Automatically draw view at the end.
 					view.draw();
 				}
@@ -281,26 +329,10 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 		return res;
 	}
 
-/*#*/ if (options.browser) {
-	// Code borrowed from Coffee Script:
-	function request(url, scope) {
-		var xhr = new (window.ActiveXObject || XMLHttpRequest)(
-				'Microsoft.XMLHTTP');
-		xhr.open('GET', url, true);
-		if (xhr.overrideMimeType)
-			xhr.overrideMimeType('text/plain');
-		xhr.onreadystatechange = function() {
-			if (xhr.readyState === 4) {
-				return evaluate(xhr.responseText, scope);
-			}
-		};
-		return xhr.send(null);
-	}
+/*#*/ if (__options.environment == 'browser') {
 
 	function load() {
-		var scripts = document.getElementsByTagName('script');
-		for (var i = 0, l = scripts.length; i < l; i++) {
-			var script = scripts[i];
+		Base.each(document.getElementsByTagName('script'), function(script) {
 			// Only load this script if it not loaded already.
 			// Support both text/paperscript and text/x-paperscript:
 			if (/^text\/(?:x-|)paperscript$/.test(script.type)
@@ -317,11 +349,14 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 					// it, to support multiple scripts per canvas. Otherwise
 					// create a new one.
 					scope = PaperScope.get(canvas)
-							|| new PaperScope(script).setup(canvas);
-				if (script.src) {
-					// If we're loading from a source, request that first and then
-					// run later.
-					request(script.src, scope);
+							|| new PaperScope(script).setup(canvas),
+					src = script.src;
+				if (src) {
+					// If we're loading from a source, request that first and
+					// then run later.
+					paper.Http.request('get', src, function(code) {
+						evaluate(code, scope);
+					});
 				} else {
 					// We can simply get the code form the script tag.
 					evaluate(script.innerHTML, scope);
@@ -329,7 +364,7 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 				// Mark script as loaded now.
 				script.setAttribute('data-paper-ignore', true);
 			}
-		}
+		}, this);
 	}
 
 	// Catch cases where paper.js is loaded after the browser event has already
@@ -341,17 +376,17 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 		paper.DomEvent.add(window, { load: load });
 	}
 
-	return {
+	return PaperScript = {
 		compile: compile,
 		evaluate: evaluate,
-		load: load
+		load: load,
+		lineNumberBase: 0
 	};
 
-/*#*/ } else { // !options.browser
-/*#*/ if (options.node) {
+/*#*/ } else { // !__options.environment == 'browser'
+/*#*/ if (__options.environment == 'node') {
 
 	// Register the .pjs extension for automatic compilation as PaperScript
-
 	var fs = require('fs'),
 		path = require('path');
 
@@ -367,12 +402,12 @@ paper.PaperScope.prototype.PaperScript = (function(root) {
 		module.exports = scope;
 	};
 
-/*#*/ } // options.node
+/*#*/ } // __options.environment == 'node'
 
-	return {
+	return PaperScript = {
 		compile: compile,
 		evaluate: evaluate
 	};
 
-/*#*/ } // !options.browser
+/*#*/ } // !__options.environment == 'browser'
 })(this);
