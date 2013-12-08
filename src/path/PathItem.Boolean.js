@@ -76,11 +76,16 @@ PathItem.inject(new function() {
 	 */
 	function reorientPath(path) {
 		if (path instanceof CompoundPath) {
-			var children = path._children,
+			var children = path.removeChildren(),
 				length = children.length,
 				bounds = new Array(length),
 				counters = new Array(length),
-				clockwise = children[0].isClockwise();
+				clockwise;
+			children.sort(function(a, b) {
+				return b.getBounds().getArea() - a.getBounds().getArea();
+			});
+			path.addChildren(children);
+			clockwise = children[0].isClockwise();
 			for (var i = 0; i < length; i++) {
 				bounds[i] = children[i].getBounds();
 				counters[i] = 0;

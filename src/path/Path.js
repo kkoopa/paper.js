@@ -47,7 +47,8 @@ var Path = PathItem.extend(/** @lends Path# */{
 	 * path.strokeColor = 'black';
 	 */
 	/**
-	 * Creates a new path item and places it at the top of the active layer.
+	 * Creates a new path item from an object description and places it at the
+	 * top of the active layer.
 	 *
 	 * @name Path#initialize
 	 * @param {Object} object an object literal containing properties to
@@ -70,6 +71,20 @@ var Path = PathItem.extend(/** @lends Path# */{
 	 * 	selected: true
 	 * });
 	 */
+	/**
+	 * Creates a new path item from SVG path-data and places it at the top of
+	 * the active layer.
+	 *
+	 * @name Path#initialize
+	 * @param {String} pathData the SVG path-data that describes the geometry
+	 * of this path.
+	 * @return {Path} the newly created path
+	 *
+	 * @example {@paperscript}
+	 * var pathData = 'M100,50c0,27.614-22.386,50-50,50S0,77.614,0,50S22.386,0,50,0S100,22.386,100,50';
+	 * var path = new Path(pathData);
+	 * path.fillColor = 'red';
+	 */
 	initialize: function Path(arg) {
 		this._closed = false;
 		this._segments = [];
@@ -86,12 +101,17 @@ var Path = PathItem.extend(/** @lends Path# */{
 				: arguments
 			// See if it behaves like a segment or a point, but filter out
 			// rectangles, as accepted by some Path.Constructor constructors.
-			: arg && (arg.point !== undefined && arg.size === undefined
-					|| arg.x !== undefined)
+			: arg && (arg.size === undefined && (arg.x !== undefined
+					|| arg.point !== undefined))
 				? arguments
 				: null;
 		// Always call setSegments() to initialize a few related variables.
 		this.setSegments(segments || []);
+		if (!segments && typeof arg === 'string') {
+			this.setPathData(arg);
+			// Erase for _initialize() call below.
+			arg = null;
+		}
 		// Only pass on arg as props if it wasn't consumed for segments already.
 		this._initialize(!segments && arg);
 	},
@@ -115,6 +135,8 @@ var Path = PathItem.extend(/** @lends Path# */{
 	_changed: function _changed(flags) {
 		_changed.base.call(this, flags);
 		if (flags & /*#=*/ ChangeFlag.GEOMETRY) {
+			// Delete cached native Path
+			delete (this._compound ? this._parent : this)._currentPath;
 			delete this._length;
 			// Clockwise state becomes undefined as soon as geometry changes.
 			delete this._clockwise;
@@ -1711,36 +1733,42 @@ var Path = PathItem.extend(/** @lends Path# */{
 					// Create a straight closing line for open paths, just like
 					// how filling open paths works.
 					: new Curve(segments[segments.length - 1]._point,
-						segments[0]._point)).getValues();
+						segments[0]._point)).getValues(),
+			previous = last;
 		for (var i = 0, l = curves.length; i < l; i++) {
-			var vals = curves[i].getValues(),
-				x = vals[0],
-				y = vals[1];
+			var curve = curves[i].getValues(),
+				x = curve[0],
+				y = curve[1];
 			// Filter out curves with 0-length (all 4 points in the same place):
-			if (!(x === vals[2] && y === vals[3] && x === vals[4]
-					&& y === vals[5] && x === vals[6] && y === vals[7])) {
-				winding += Curve._getWinding(vals, point.x, point.y,
+			if (!(x === curve[2] && y === curve[3] && x === curve[4]
+					&& y === curve[5] && x === curve[6] && y === curve[7])) {
+				winding += Curve._getWinding(curve, previous, point.x, point.y,
 						roots1, roots2);
+				previous = curve;
 			}
 		}
 		if (!closed) {
-			winding += Curve._getWinding(last, point.x, point.y,
+			winding += Curve._getWinding(last, previous, point.x, point.y,
 					roots1, roots2);
 		}
 		return winding;
 	},
 
 	_hitTest: function(point, options) {
-		var style = this.getStyle(),
+		var that = this,
+			style = this.getStyle(),
 			segments = this._segments,
 			closed = this._closed,
 			tolerance = options.tolerance,
-			radius = 0, join, cap, miterLimit,
-			that = this,
-			area, loc, res;
-
-		if (options.stroke) {
-			radius = style.getStrokeWidth() / 2;
+			join, cap, miterLimit,
+			area, loc, res,
+			hasStroke = options.stroke && style.hasStroke(),
+			hasFill = options.fill && style.hasFill(),
+			radius = hasStroke ? style.getStrokeWidth() / 2
+					// Set radius to 0 so when we're hit-testing, the tolerance
+					// is used for fill too, through stroke functionality.
+					: hasFill ? 0 : null;
+		if (radius != null) {
 			if (radius > 0) {
 				join = style.getStrokeJoin();
 				cap = style.getStrokeCap();
@@ -1784,12 +1812,16 @@ var Path = PathItem.extend(/** @lends Path# */{
 
 		function isInArea(point) {
 			var length = area.length,
+				previous = getAreaCurve(length - 1),
 				roots1 = [],
 				roots2 = [],
 				winding = 0;
-			for (var i = 0; i < length; i++)
-				winding += Curve._getWinding(getAreaCurve(i), point.x, point.y,
+			for (var i = 0; i < length; i++) {
+				var curve = getAreaCurve(i);
+				winding += Curve._getWinding(curve, previous, point.x, point.y,
 						roots1, roots2);
+				previous = curve;
+			}
 			return !!winding;
 		}
 
@@ -1861,12 +1893,10 @@ var Path = PathItem.extend(/** @lends Path# */{
 		}
 		// Don't process loc yet, as we also need to query for stroke after fill
 		// in some cases. Simply skip fill query if we already have a matching
-		// stroke.
-		return !loc && options.fill && this.hasFill() && this._contains(point)
+		// stroke. If we have a loc and no stroke then it's a result for fill.
+		return !loc && hasFill && this._contains(point) || loc && !hasStroke
 				? new HitResult('fill', this)
 				: loc
-					// TODO: Do we need to transform loc back to the coordinate
-					// system of the DOM level on which the inquiry was started?
 					? new HitResult('stroke', this, { location: loc })
 					: null;
 	}
@@ -1990,14 +2020,15 @@ var Path = PathItem.extend(/** @lends Path# */{
 		for (var i = 0; i < length; i++)
 			drawSegment(i);
 		// Close path by drawing first segment again
-		if (path._closed && length > 1)
+		if (path._closed)
 			drawSegment(0);
 	}
 
 	return {
 		_draw: function(ctx, param) {
 			var clip = param.clip,
-				compound = param.compound;
+				// Also mark this Path as _compound so _changed() knows about it
+				compound = this._compound = param.compound;
 			if (!compound)
 				ctx.beginPath();
 
@@ -2015,12 +2046,18 @@ var Path = PathItem.extend(/** @lends Path# */{
 				return dashArray[((i % dashLength) + dashLength) % dashLength];
 			}
 
-			// Prepare the canvas path if we have any situation that
-			// requires it to be defined.
-			if (hasFill || hasStroke && !dashLength || compound || clip)
+			if (this._currentPath) {
+				ctx.currentPath = this._currentPath;
+			} else if (hasFill || hasStroke && !dashLength || compound || clip){
+				// Prepare the canvas path if we have any situation that
+				// requires it to be defined.
 				drawSegments(ctx, this);
-			if (this._closed)
-				ctx.closePath();
+				if (this._closed)
+					ctx.closePath();
+				// CompoundPath collects its own _currentPath
+				if (!compound)
+					this._currentPath = ctx.currentPath;
+			}
 
 			if (!clip && !compound && (hasFill || hasStroke)) {
 				// If the path is part of a compound path or doesn't have a fill
@@ -2574,14 +2611,10 @@ statics: {
 		}
 
 		function addCap(segment, cap) {
-			switch (cap) {
-			case 'round':
+			if (cap === 'round') {
 				addJoin(segment, cap);
-				break;
-			case 'butt':
-			case 'square':
+			} else {
 				Path._addSquareCap(segment, cap, radius, add); 
-				break;
 			}
 		}
 
@@ -2589,7 +2622,7 @@ statics: {
 			addJoin(segments[i], join);
 		if (closed) {
 			addJoin(segments[0], join);
-		} else {
+		} else if (length > 0) {
 			addCap(segments[0], cap);
 			addCap(segments[segments.length - 1], cap);
 		}

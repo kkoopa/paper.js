@@ -52,6 +52,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	_serializeFields: {
 		name: null,
 		matrix: new Matrix(),
+		registration: null,
 		locked: false,
 		visible: true,
 		blendMode: 'normal',
@@ -69,6 +70,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	_initialize: function(props, point) {
 		// Define this Item's unique id.
 		this._id = Item._id = (Item._id || 0) + 1;
+		// Handle matrix before everything else, to avoid issues with
+		// #addChild() calling _changed() and accessing _matrix already.
+		var matrix = this._matrix = new Matrix();
+		if (point)
+			matrix.translate(point);
+		matrix._owner = this;
 		// If _project is already set, the item was already moved into the DOM
 		// hierarchy. Used by Layer, where it's added to project.layers instead
 		if (!this._project) {
@@ -83,10 +90,6 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			}
 		}
 		this._style = new Style(this._project._currentStyle, this);
-		var matrix = this._matrix = new Matrix();
-		if (point)
-			matrix.translate(point);
-		matrix._owner = this;
 		return props ? this._set(props, { insert: true }) : true;
 	},
 
@@ -210,6 +213,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			// Clear cached bounds and position whenever geometry changes
 			delete this._bounds;
 			delete this._position;
+			delete this._decomposed;
 		}
 		if (parent && (flags
 				& (/*#=*/ ChangeFlag.GEOMETRY | /*#=*/ ChangeFlag.STROKE))) {
@@ -755,14 +759,21 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	getPosition: function(/* dontLink */) {
 		// Cache position value.
 		// Pass true for dontLink in getCenter(), so receive back a normal point
-		var pos = this._position
-				|| (this._position = this.getBounds().getCenter(true));
+		var position = this._position,
+			ctor = arguments[0] ? Point : LinkedPoint;
 		// Do not cache LinkedPoints directly, since we would not be able to
 		// use them to calculate the difference in #setPosition, as when it is
 		// modified, it would hold new values already and only then cause the
 		// calling of #setPosition.
-		return new (arguments[0] ? Point : LinkedPoint)
-				(pos.x, pos.y, this, 'setPosition');
+		if (!position) {
+			// If a registration point is provided, use it to determine position
+			// base don the matrix. Otherwise use the center of the bounds.
+			var registration = this._registration;
+			position = this._position = registration
+					? this._matrix._transformPoint(registration)
+					: this.getBounds().getCenter(true);
+		}
+		return new ctor(position.x, position.y, this, 'setPosition');
 	},
 
 	setPosition: function(/* point */) {
@@ -770,6 +781,23 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// translate the item. Pass true for dontLink, as we do not need a
 		// LinkedPoint to simply calculate this distance.
 		this.translate(Point.read(arguments).subtract(this.getPosition(true)));
+	},
+
+	_registration: null,
+
+	getRegistration: function(/* dontLink */) {
+		var reg = this._registration;
+		if (reg) {
+			var ctor = arguments[0] ? Point : LinkedPoint;
+			reg = new ctor(reg.x, reg.y, this, 'setRegistration');
+		}
+		return reg;
+	},
+
+	setRegistration: function(/* point */) {
+		this._registration = Point.read(arguments);
+		// No need for _changed() since the only thing this affects is _position
+		delete this._position;
 	}
 }, Base.each(['getBounds', 'getStrokeBounds', 'getHandleBounds', 'getRoughBounds'],
 	function(name) {
@@ -861,10 +889,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 					i < l; i++) {
 				var item = list[i];
 				delete item._bounds;
+				// Delete position as well, since it's depending on bounds.
+				delete item._position;
 				// We need to recursively call _clearBoundsCache, because if the
 				// cache for this item's children is not valid anymore, that
 				// propagates up the DOM tree.
-				if (item != this && item._boundsCache)
+				if (item !== this && item._boundsCache)
 					item._clearBoundsCache();
 			}
 			delete this._boundsCache;
@@ -960,6 +990,57 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @ignore
 	 */
 }), /** @lends Item# */{
+	_decompose: function() {
+		return this._decomposed = this._matrix.decompose();
+	},
+
+	/**
+	 * The current rotation of the item, as described by its {@link #matrix}.
+	 *
+	 * @type Number
+	 * @bean
+	 */
+	getRotation: function() {
+		var decomposed = this._decomposed || this._decompose();
+		return decomposed && decomposed.rotation;
+	},
+
+	setRotation: function(rotation) {
+		var current = this.getRotation();
+		if (current != null && rotation != null) {
+			// Preseve the cached _decomposed values over rotation, and only
+			// update the rotation property on it.
+			var decomposed = this._decomposed;
+			this.rotate(rotation - current);
+			decomposed.rotation = rotation;
+			this._decomposed = decomposed;
+		}
+	},
+
+	/**
+	 * The current scaling of the item, as described by its {@link #matrix}.
+	 *
+	 * @type Point
+	 * @bean
+	 */
+	getScaling: function() {
+		var decomposed = this._decomposed || this._decompose();
+		return decomposed && decomposed.scaling;
+	},
+
+	setScaling: function(/* scaling */) {
+		var current = this.getScaling();
+		if (current != null) {
+			// Clone existing points since we're caching internally.
+			var scaling = Point.read(arguments, 0, 0, { clone: true }),
+				// See #setRotation() for preservation of _decomposed.
+				decomposed = this._decomposed;
+			this.scale(scaling.x / current.x, scaling.y / current.y);
+			decomposed.scaling = scaling;
+			this._decomposed = decomposed;
+		}
+	},
+
 	/**
 	 * The item's transformation matrix, defining position and dimensions in
 	 * relation to its parent item in which it is contained.
@@ -995,7 +1076,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 
 	/**
 	 * Specifies whether the group applies transformations directly to its
-	 * children, or whether they are to be stored in its {@link Item#matrix}
+	 * children, or whether they are to be stored in its {@link #matrix}
 	 *
 	 * @type Boolean
 	 * @default true
@@ -2359,10 +2440,76 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @type Color
 	 */
 
-	// DOCS: Document the different arguments that this function can receive.
 	/**
 	 * {@grouptitle Transform Functions}
 	 *
+	 * Translates (moves) the item by the given offset point.
+	 *
+	 * @param {Point} delta the offset to translate the item by
+	 */
+	translate: function(/* delta */) {
+		var mx = new Matrix();
+		return this.transform(mx.translate.apply(mx, arguments));
+	},
+
+	/**
+	 * Rotates the item by a given angle around the given point.
+	 *
+	 * Angles are oriented clockwise and measured in degrees.
+	 *
+	 * @param {Number} angle the rotation angle
+	 * @param {Point} [center={@link Item#position}]
+	 * @see Matrix#rotate
+	 *
+	 * @example {@paperscript}
+	 * // Rotating an item:
+	 *
+	 * // Create a rectangle shaped path with its top left
+	 * // point at {x: 80, y: 25} and a size of {width: 50, height: 50}:
+	 * var path = new Path.Rectangle(new Point(80, 25), new Size(50, 50));
+	 * path.fillColor = 'black';
+     *
+	 * // Rotate the path by 30 degrees:
+	 * path.rotate(30);
+	 *
+	 * @example {@paperscript height=200}
+	 * // Rotating an item around a specific point:
+	 *
+	 * // Create a rectangle shaped path with its top left
+	 * // point at {x: 175, y: 50} and a size of {width: 100, height: 100}:
+	 * var topLeft = new Point(175, 50);
+	 * var size = new Size(100, 100);
+	 * var path = new Path.Rectangle(topLeft, size);
+	 * path.fillColor = 'black';
+	 *
+	 * // Draw a circle shaped path in the center of the view,
+	 * // to show the rotation point:
+	 * var circle = new Path.Circle({
+	 * 	center: view.center,
+	 * 	radius: 5,
+	 * 	fillColor: 'white'
+	 * });
+	 *
+	 * // Each frame rotate the path 3 degrees around the center point
+	 * // of the view:
+	 * function onFrame(event) {
+	 * 	path.rotate(3, view.center);
+	 * }
+	 */
+	rotate: function(angle, center) {
+		return this.transform(new Matrix().rotate(angle,
+				center || this.getPosition(true)));
+	}
+}, Base.each(['scale', 'shear', 'skew'], function(name) {
+	this[name] = function() {
+		// See Matrix#scale for explanation of this:
+		var point = Point.read(arguments),
+			center = Point.read(arguments, 0, 0, { readNull: true });
+		return this.transform(new Matrix()[name](point,
+				center || this.getPosition(true)));
+	};
+}, /** @lends Item# */{
+	/**
 	 * Scales the item by the given value from its center point, or optionally
 	 * from a supplied point.
 	 *
@@ -2423,74 +2570,6 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * // Scale the path horizontally by 300%
 	 * circle.scale(3, 1);
 	 */
-	scale: function(hor, ver /* | scale */, center) {
-		// See Matrix#scale for explanation of this:
-		if (arguments.length < 2 || typeof ver === 'object') {
-			center = ver;
-			ver = hor;
-		}
-		return this.transform(new Matrix().scale(hor, ver,
-				center || this.getPosition(true)));
-	},
-
-	/**
-	 * Translates (moves) the item by the given offset point.
-	 *
-	 * @param {Point} delta the offset to translate the item by
-	 */
-	translate: function(/* delta */) {
-		var mx = new Matrix();
-		return this.transform(mx.translate.apply(mx, arguments));
-	},
-
-	/**
-	 * Rotates the item by a given angle around the given point.
-	 *
-	 * Angles are oriented clockwise and measured in degrees.
-	 *
-	 * @param {Number} angle the rotation angle
-	 * @param {Point} [center={@link Item#position}]
-	 * @see Matrix#rotate
-	 *
-	 * @example {@paperscript}
-	 * // Rotating an item:
-	 *
-	 * // Create a rectangle shaped path with its top left
-	 * // point at {x: 80, y: 25} and a size of {width: 50, height: 50}:
-	 * var path = new Path.Rectangle(new Point(80, 25), new Size(50, 50));
-	 * path.fillColor = 'black';
-     *
-	 * // Rotate the path by 30 degrees:
-	 * path.rotate(30);
-	 *
-	 * @example {@paperscript height=200}
-	 * // Rotating an item around a specific point:
-	 *
-	 * // Create a rectangle shaped path with its top left
-	 * // point at {x: 175, y: 50} and a size of {width: 100, height: 100}:
-	 * var topLeft = new Point(175, 50);
-	 * var size = new Size(100, 100);
-	 * var path = new Path.Rectangle(topLeft, size);
-	 * path.fillColor = 'black';
-	 *
-	 * // Draw a circle shaped path in the center of the view,
-	 * // to show the rotation point:
-	 * var circle = new Path.Circle({
-	 * 	center: view.center,
-	 * 	radius: 5,
-	 * 	fillColor: 'white'
-	 * });
-	 *
-	 * // Each frame rotate the path 3 degrees around the center point
-	 * // of the view:
-	 * function onFrame(event) {
-	 * 	path.rotate(3, view.center);
-	 * }
-	 */
-	rotate: function(angle, center) {
-		return this.transform(new Matrix().rotate(angle,
-				center || this.getPosition(true)));
-	},
 
 	// TODO: Add test for item shearing, as it might be behaving oddly.
 	/**
@@ -2499,7 +2578,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 *
 	 * @name Item#shear
 	 * @function
-	 * @param {Point} point
+	 * @param {Point} shear the horziontal and vertical shear factors as a point
 	 * @param {Point} [center={@link Item#position}]
 	 * @see Matrix#shear
 	 */
@@ -2509,21 +2588,34 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 *
 	 * @name Item#shear
 	 * @function
-	 * @param {Number} hor the horizontal shear factor.
-	 * @param {Number} ver the vertical shear factor.
+	 * @param {Number} hor the horizontal shear factor
+	 * @param {Number} ver the vertical shear factor
 	 * @param {Point} [center={@link Item#position}]
 	 * @see Matrix#shear
 	 */
-	shear: function(hor, ver, center) {
-		// See Matrix#scale for explanation of this:
-		if (arguments.length < 2 || typeof ver === 'object') {
-			center = ver;
-			ver = hor;
-		}
-		return this.transform(new Matrix().shear(hor, ver,
-				center || this.getPosition(true)));
-	},
 
+	/**
+	 * Skews the item by the given angles from its center point, or optionally
+	 * by a supplied point.
+	 *
+	 * @name Item#skew
+	 * @function
+	 * @param {Point} skew  the horziontal and vertical skew angles in degrees
+	 * @param {Point} [center={@link Item#position}]
+	 * @see Matrix#shear
+	 */
+	/**
+	 * Skews the item by the given angles from its center point, or optionally
+	 * by a supplied point.
+	 *
+	 * @name Item#skew
+	 * @function
+	 * @param {Number} hor the horizontal skew angle in degrees
+	 * @param {Number} ver the vertical sskew angle in degrees
+	 * @param {Point} [center={@link Item#position}]
+	 * @see Matrix#shear
+	 */
+}), /** @lends Item# */{
 	/**
 	 * Transform the item.
 	 *
@@ -2550,7 +2642,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// Detect matrices that contain only translations and scaling
 		// and transform the cached _bounds and _position without having to
 		// fully recalculate each time.
-		if (bounds && matrix.getRotation() % 90 === 0) {
+		var decomp = bounds && matrix.decompose();
+		if (decomp && !decomp.shearing && decomp.angle % 90 === 0) {
 			// Transform the old bound by looping through all the cached bounds
 			// in _bounds and transform each.
 			for (var key in bounds) {
@@ -2575,6 +2668,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 
 	_applyMatrix: function(matrix, applyMatrix) {
 		var children = this._children;
+
 		if (children && children.length > 0) {
 			for (var i = 0, l = children.length; i < l; i++)
 				children[i].transform(matrix, applyMatrix);
@@ -2592,12 +2686,15 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		var matrix = this._matrix;
 		if (this._applyMatrix(matrix, true)) {
 			// When the matrix could be applied, we also need to transform
-			// color styles with matrices (only gradients so far):
-			var style = this._style,
+			// color styles (only gradients so far) and registration point:
+			var registration = this._registration,
+				style = this._style,
 				// pass true for dontMerge so we don't recursively transform
 				// styles on groups' children.
 				fillColor = style.getFillColor(true),
 				strokeColor = style.getStrokeColor(true);
+			if (registration)
+				registration.transform(matrix);
 			if (fillColor)
 				fillColor.transform(matrix);
 			if (strokeColor)
@@ -3234,6 +3331,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			transforms = param.transforms,
 			parentMatrix = transforms[transforms.length - 1],
 			globalMatrix = parentMatrix.clone().concatenate(this._matrix);
+		// If this item is not invertible, do not draw it, since it would cause
+		// empty ctx.currentPath and mess up caching. It appears to also be a
+		// good idea generally to not draw in such cirucmstances, e.g. SVG
+		// handles it the same way.
+		if (!globalMatrix.isInvertible())
+			return;
 		// Only keep track of transformation if told so. See Project#draw()
 		if (trackTransforms)
 			transforms.push(this._globalMatrix = globalMatrix);

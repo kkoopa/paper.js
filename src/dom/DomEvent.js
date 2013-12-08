@@ -17,30 +17,13 @@
  */
 var DomEvent = {
 	add: function(el, events) {
-		for (var type in events) {
-			var func = events[type];
-			if (el.addEventListener) {
-				el.addEventListener(type, func, false);
-			} else if (el.attachEvent) {
-				// Make a bound closure that calls on the right object and
-				// passes on the global event object as a parameter.
-				el.attachEvent('on' + type, func.bound = function() {
-					func.call(el, window.event);
-				});
-			}
-		}
+		for (var type in events)
+			el.addEventListener(type, events[type], false);
 	},
 
 	remove: function(el, events) {
-		for (var type in events) {
-			var func = events[type];
-			if (el.removeEventListener) {
-				el.removeEventListener(type, func, false);
-			} else if (el.detachEvent) {
-				// Remove the bound closure instead of func itself
-				el.detachEvent('on' + type, func.bound);
-			}
-		}
+		for (var type in events)
+			el.removeEventListener(type, events[type], false);
 	},
 
 	getPoint: function(event) {
@@ -65,26 +48,9 @@ var DomEvent = {
 				target || DomEvent.getTarget(event)));
 	},
 
-	preventDefault: function(event) {
-		if (event.preventDefault) {
-			event.preventDefault();
-		} else {
-			// IE
-			event.returnValue = false;
-		}
-	},
-
-	stopPropagation: function(event) {
-		if (event.stopPropagation) {
-			event.stopPropagation();
-		} else {
-			event.cancelBubble = true;
-		}
-	},
-
 	stop: function(event) {
-		DomEvent.stopPropagation(event);
-		DomEvent.preventDefault(event);
+		event.stopPropagation();
+		event.preventDefault();
 	}
 };
 

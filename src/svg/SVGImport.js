@@ -332,10 +332,10 @@ new function() {
 				matrix.scale(v);
 				break;
 			case 'skewX':
+				matrix.skew(v[0], 0);
+				break;
 			case 'skewY':
-				var value = Math.tan(v[0] * Math.PI / 180),
-					isX = command == 'skewX';
-				matrix.shear(isX ? value : 0, isX ? 0 : value);
+				matrix.skew(0, v[0]);
 				break;
 			}
 		}

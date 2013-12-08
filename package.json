@@ -1,6 +1,6 @@
 {
   "name": "paper",
-  "version": "0.9.14",
+  "version": "0.9.15",
   "description": "The Swiss Army Knife of Vector Graphics Scripting",
   "homepage": "http://paperjs.org",
   "repository": "git://github.com/paperjs/paper.js",
@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "canvas": "git://github.com/kkoopa/node-canvas.git#memleaks",
-    "jsdom": "git://github.com/kkoopa/jsdom.git"
+    "jsdom": "git://github.com/kkoopa/jsdom.git",
+    "request": "~2.27.0"
   },
   "devDependencies": {
     "uglify-js": "~2.3.6",
