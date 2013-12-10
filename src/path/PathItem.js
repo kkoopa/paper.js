@@ -67,13 +67,15 @@ var PathItem = Item.extend(/** @lends PathItem# */{
 		var locations = [],
 			curves1 = this.getCurves(),
 			curves2 = path.getCurves(),
+			matrix1 = this._matrix.orNullIfIdentity(),
+			matrix2 = path._matrix.orNullIfIdentity(),
 			length2 = curves2.length,
 			values2 = [];
 		for (var i = 0; i < length2; i++)
-			values2[i] = curves2[i].getValues();
+			values2[i] = curves2[i].getValues(matrix2);
 		for (var i = 0, l = curves1.length; i < l; i++) {
 			var curve1 = curves1[i],
-				values1 = curve1.getValues();
+				values1 = curve1.getValues(matrix1);
 			for (var j = 0; j < length2; j++)
 				Curve.getIntersections(values1, values2[j], curve1, curves2[j],
 						locations);

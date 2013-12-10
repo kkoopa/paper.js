@@ -47,6 +47,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	// Exceptions are Raster, PlacedSymbol, Clip and Shape.
 	_transformContent: true,
 	_boundsSelected: false,
+	_selectChildren: false,
 	// Provide information about fields to be serialized, with their defaults
 	// that can be ommited.
 	_serializeFields: {
@@ -68,8 +69,11 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	},
 
 	_initialize: function(props, point) {
-		// Define this Item's unique id.
-		this._id = Item._id = (Item._id || 0) + 1;
+		// Define this Item's unique id. But allow the creation of internally
+		// used paths with no ids.
+		var internal = props && props._internal === true;
+		if (!internal)
+			this._id = Item._id = (Item._id || 0) + 1;
 		// Handle matrix before everything else, to avoid issues with
 		// #addChild() calling _changed() and accessing _matrix already.
 		var matrix = this._matrix = new Matrix();
@@ -80,8 +84,9 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// hierarchy. Used by Layer, where it's added to project.layers instead
 		if (!this._project) {
 			var project = paper.project;
-			// Do not insert into DOM if props.insert is false.
-			if (props && props.insert === false) {
+			// Do not insert into DOM if it's an internal path or
+			// props.insert is false.
+			if (internal || props && props.insert === false) {
 				this._setProject(project);
 			} else {
 				// Create a new layer if there is no active one. This will
@@ -204,34 +209,33 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @param {ChangeFlag} flags describes what exactly has changed.
 	 */
 	_changed: function(flags) {
-		var parent = this._parent,
-			project = this._project,
-			symbol = this._parentSymbol;
-		// Reset _drawCount on each change.
-		this._drawCount = null;
+		var symbol = this._parentSymbol,
+			cacheParent = this._parent || symbol,
+			project = this._project;
 		if (flags & /*#=*/ ChangeFlag.GEOMETRY) {
 			// Clear cached bounds and position whenever geometry changes
 			delete this._bounds;
 			delete this._position;
 			delete this._decomposed;
+			delete this._globalMatrix;
 		}
-		if (parent && (flags
+		if (cacheParent && (flags
 				& (/*#=*/ ChangeFlag.GEOMETRY | /*#=*/ ChangeFlag.STROKE))) {
 			// Clear cached bounds of all items that this item contributes to.
 			// We call this on the parent, since the information is cached on
 			// the parent, see getBounds().
-			parent._clearBoundsCache();
+			Item._clearBoundsCache(cacheParent);
 		}
 		if (flags & /*#=*/ ChangeFlag.HIERARCHY) {
 			// Clear cached bounds of all items that this item contributes to.
 			// We don't call this on the parent, since we're already the parent
 			// of the child that modified the hierarchy (that's where these
 			// HIERARCHY notifications go)
-			this._clearBoundsCache();
+			Item._clearBoundsCache(this);
 		}
 		if (project) {
 			if (flags & /*#=*/ ChangeFlag.APPEARANCE) {
-				project._needsRedraw = true;
+				project._needsUpdate = true;
 			}
 			// Have project keep track of changed items so they can be iterated.
 			// This can be used for example to update the SVG tree. Needs to be
@@ -292,8 +296,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	/**
 	 * The type of the item as a string.
 	 *
-	 * @type String('group', 'layer', 'path', 'compound-path', 'raster',
-	 * 'placed-symbol', 'point-text')
+	 * @type String('group', 'layer', 'path', 'compound-path', 'shape',
+	 * 'raster', 'placed-symbol', 'point-text')
 	 * @bean
 	 */
 	getType: function() {
@@ -570,9 +574,9 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	_guide: false,
 
 	/**
-	 * Specifies whether an item is selected and will also return {@code true}
-	 * if the item is partially selected (groups with some selected or partially
-	 * selected paths).
+	 * Specifies whether the item is selected. This will also return
+	 * {@code true} for {@link Group} items if they are partially selected, e.g.
+	 * groups containing selected or partially selected paths.
 	 *
 	 * Paper.js draws the visual outlines of selected items on top of your
 	 * project. This can be useful for debugging, as it allows you to see the
@@ -584,6 +588,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @bean
 	 * @see Project#selectedItems
 	 * @see Segment#selected
+	 * @see Curve#selected
 	 * @see Point#selected
 	 *
 	 * @example {@paperscript}
@@ -595,7 +600,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * path.selected = true; // Select the path
 	 */
 	isSelected: function() {
-		if (this._children) {
+		if (this._selectChildren) {
 			for (var i = 0, l = this._children.length; i < l; i++)
 				if (this._children[i].isSelected())
 					return true;
@@ -603,14 +608,14 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		return this._selected;
 	},
 
-	setSelected: function(selected /*, noChildren */) {
+	setSelected: function(selected, noChildren) {
 		// Don't recursively call #setSelected() if it was called with
 		// noChildren set to true, see #setFullySelected().
-		if (this._children && !arguments[1]) {
+		if (!noChildren && this._selectChildren) {
 			for (var i = 0, l = this._children.length; i < l; i++)
 				this._children[i].setSelected(selected);
 		}
-		if ((selected = !!selected) != this._selected) {
+		if ((selected = !!selected) ^ this._selected) {
 			this._selected = selected;
 			this._project._updateSelection(this);
 			this._changed(/*#=*/ Change.ATTRIBUTE);
@@ -799,108 +804,40 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// No need for _changed() since the only thing this affects is _position
 		delete this._position;
 	}
-}, Base.each(['getBounds', 'getStrokeBounds', 'getHandleBounds', 'getRoughBounds'],
-	function(name) {
+}, Base.each(['getBounds', 'getStrokeBounds', 'getHandleBounds',
+		'getRoughBounds', 'getInternalBounds', 'getInternalRoughBounds'],
+	function(key) {
 		// Produce getters for bounds properties. These handle caching, matrices
 		// and redirect the call to the private _getBounds, which can be
 		// overridden by subclasses, see below.
-		this[name] = function(/* matrix */) {
+		// Treat internalBounds and internalRoughBounds untransformed, as
+		// required by the code that uses these methods internally, but make
+		// sure they can be cached like all the others as well.
+		// Pass on the getter that these version actually use, untransformed,
+		// as internalGetter.
+		// NOTE: These need to be versions of other methods, as otherwise the
+		// cache gets messed up.
+		var match = key.match(/^getInternal(.*)$/),
+			internalGetter = match ? 'get' + match[1] : null;
+		this[key] = function(/* matrix */) {
 			var getter = this._boundsGetter,
 				// Allow subclasses to override _boundsGetter if they use
 				// the same calculations for multiple type of bounds.
-				// The default is name:
-				bounds = this._getCachedBounds(typeof getter == 'string'
-						? getter : getter && getter[name] || name, arguments[0]);
+				// The default is key:
+				bounds = this._getCachedBounds(!internalGetter
+						&& (typeof getter === 'string'
+							? getter : getter && getter[key])
+						|| key, arguments[0], null, internalGetter);
 			// If we're returning 'bounds', create a LinkedRectangle that uses
 			// the setBounds() setter to update the Item whenever the bounds are
 			// changed:
-			return name === 'getBounds'
+			return key === 'getBounds'
 					? new LinkedRectangle(bounds.x, bounds.y, bounds.width,
 							bounds.height, this, 'setBounds') 
 					: bounds;
 		};
 	},
 /** @lends Item# */{
-	/**
-	 * Private method that deals with the calling of _getBounds, recursive
-	 * matrix concatenation and handles all the complicated caching mechanisms.
-	 */
-	_getCachedBounds: function(getter, matrix, cacheItem) {
-		// See if we can cache these bounds. We only cache the bounds
-		// transformed with the internally stored _matrix, (the default if no
-		// matrix is passed).
-		var cache = (!matrix || matrix.equals(this._matrix)) && getter;
-		// Set up a boundsCache structure that keeps track of items that keep
-		// cached bounds that depend on this item. We store this in our parent,
-		// for multiple reasons:
-		// The parent receives HIERARCHY change notifications for when its
-		// children are added or removed and can thus clear the cache, and we
-		// save a lot of memory, e.g. when grouping 100 items and asking the
-		// group for its bounds. If stored on the children, we would have 100
-		// times the same structure.
-		// Note: This needs to happen before returning cached values, since even
-		// then, _boundsCache needs to be kept up-to-date.
-		if (cacheItem && this._parent) {
-			// Set-up the parent's boundsCache structure if it does not
-			// exist yet and add the cacheItem to it.
-			var id = cacheItem._id,
-				ref = this._parent._boundsCache
-					= this._parent._boundsCache || {
-				// Use both a hashtable for ids and an array for the list,
-				// so we can keep track of items that were added already
-				ids: {},
-				list: []
-			};
-			if (!ref.ids[id]) {
-				ref.list.push(cacheItem);
-				ref.ids[id] = cacheItem;
-			}
-		}
-		if (cache && this._bounds && this._bounds[cache])
-			return this._bounds[cache].clone();
-		// If the result of concatinating the passed matrix with our internal
-		// one is an identity transformation, set it to null for faster
-		// processing
-		var identity = this._matrix.isIdentity();
-		matrix = !matrix || matrix.isIdentity()
-				? identity ? null : this._matrix
-				: identity ? matrix : matrix.clone().concatenate(this._matrix);
-		// If we're caching bounds on this item, pass it on as cacheItem, so the
-		// children can setup the _boundsCache structures for it.
-		var bounds = this._getBounds(getter, matrix, cache ? this : cacheItem);
-		// If we can cache the result, update the _bounds cache structure
-		// before returning
-		if (cache) {
-			if (!this._bounds)
-				this._bounds = {};
-			this._bounds[cache] = bounds.clone();
-		}
-		return bounds;
-	},
-
-	/**
-	 * Clears cached bounds of all items that the children of this item are
-	 * contributing to. See #_getCachedBounds() for an explanation why this
-	 * information is stored on parents, not the children themselves.
-	 */
-	_clearBoundsCache: function() {
-		if (this._boundsCache) {
-			for (var i = 0, list = this._boundsCache.list, l = list.length;
-					i < l; i++) {
-				var item = list[i];
-				delete item._bounds;
-				// Delete position as well, since it's depending on bounds.
-				delete item._position;
-				// We need to recursively call _clearBoundsCache, because if the
-				// cache for this item's children is not valid anymore, that
-				// propagates up the DOM tree.
-				if (item !== this && item._boundsCache)
-					item._clearBoundsCache();
-			}
-			delete this._boundsCache;
-		}
-	},
-
 	/**
 	 * Protected method used in all the bounds getters. It loops through all the
 	 * children, gets their bounds and finds the bounds around all of them.
@@ -954,6 +891,99 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		matrix.translate(-center.x, -center.y);
 		// Now execute the transformation
 		this.transform(matrix);
+	},
+
+	/**
+	 * Private method that deals with the calling of _getBounds, recursive
+	 * matrix concatenation and handles all the complicated caching mechanisms.
+	 */
+	_getCachedBounds: function(getter, matrix, cacheItem, internalGetter) {
+		// See if we can cache these bounds. We only cache the bounds
+		// transformed with the internally stored _matrix, (the default if no
+		// matrix is passed).
+		matrix = matrix && matrix.orNullIfIdentity();
+		// Do not transform by the internal matrix if there is a internalGetter.
+		var _matrix = internalGetter ? null : this._matrix.orNullIfIdentity(),
+			cache = (!matrix || matrix.equals(_matrix)) && getter;
+		// Set up a boundsCache structure that keeps track of items that keep
+		// cached bounds that depend on this item. We store this in our parent,
+		// for multiple reasons:
+		// The parent receives HIERARCHY change notifications for when its
+		// children are added or removed and can thus clear the cache, and we
+		// save a lot of memory, e.g. when grouping 100 items and asking the
+		// group for its bounds. If stored on the children, we would have 100
+		// times the same structure.
+		// Note: This needs to happen before returning cached values, since even
+		// then, _boundsCache needs to be kept up-to-date.
+		var cacheParent = this._parent || this._parentSymbol;
+		if (cacheItem && cacheParent) {
+			// Set-up the parent's boundsCache structure if it does not
+			// exist yet and add the cacheItem to it.
+			var id = cacheItem._id,
+				ref = cacheParent._boundsCache = cacheParent._boundsCache || {
+					// Use both a hashtable for ids and an array for the list,
+					// so we can keep track of items that were added already
+					ids: {},
+					list: []
+				};
+			if (!ref.ids[id]) {
+				ref.list.push(cacheItem);
+				ref.ids[id] = cacheItem;
+			}
+		}
+		if (cache && this._bounds && this._bounds[cache])
+			return this._bounds[cache].clone();
+		// If the result of concatinating the passed matrix with our internal
+		// one is an identity transformation, set it to null for faster
+		// processing
+		matrix = !matrix
+				? _matrix
+				: _matrix
+					? matrix.clone().concatenate(_matrix)
+					: matrix;
+		// If we're caching bounds on this item, pass it on as cacheItem, so the
+		// children can setup the _boundsCache structures for it.
+		// getInternalBounds is getBounds untransformed. Do not replace earlier,
+		// so we can cache both separately, since they're not in the same 
+		// transformation space!
+		var bounds = this._getBounds(internalGetter || getter, matrix,
+				cache ? this : cacheItem);
+		// If we can cache the result, update the _bounds cache structure
+		// before returning
+		if (cache) {
+			if (!this._bounds)
+				this._bounds = {};
+			var cached = this._bounds[cache] = bounds.clone();
+			// Mark as internal, so Item#transform() won't transform it!
+			cached._internal = !!internalGetter;
+		}
+		return bounds;
+	},
+
+	statics: {
+		/**
+		 * Clears cached bounds of all items that the children of this item are
+		 * contributing to. See #_getCachedBounds() for an explanation why this
+		 * information is stored on parents, not the children themselves.
+		 */
+		_clearBoundsCache: function(item) {
+			// This is defined as a static method so Symbol can used it too.
+			if (item._boundsCache) {
+				for (var i = 0, list = item._boundsCache.list, l = list.length;
+						i < l; i++) {
+					var child = list[i];
+					delete child._bounds;
+					// Delete position as well, since it's depending on bounds.
+					delete child._position;
+					// We need to recursively call _clearBoundsCache, because if
+					// the cache for this child's children is not valid anymore,
+					// that propagates up the DOM tree.
+					if (child !== item && child._boundsCache)
+						child._clearBoundsCache();
+				}
+				delete item._boundsCache;
+			}
+		}
 	}
 
 	/**
@@ -1068,10 +1098,18 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * @bean
 	 */
 	getGlobalMatrix: function() {
-		// TODO: if drawCount is out of sync, we still need to walk up the chain
-		// and concatenate the matrices.
-		return this._drawCount === this._project._drawCount
-				&& this._globalMatrix || null;
+		var matrix = this._globalMatrix,
+			updateVersion = this._project._updateVersion;
+		// If _globalMatrix is out of sync, recalculate it now
+		if (matrix && matrix._updateVersion !== updateVersion)
+			matrix = null;
+		if (!matrix) {
+			matrix = this._globalMatrix = this._matrix.clone();
+			if (this._parent)
+				matrix.concatenate(this._parent.getGlobalMatrix());
+			matrix._updateVersion = updateVersion;
+		}
+		return matrix;
 	},
 
 	/**
@@ -1103,20 +1141,33 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		return this._project;
 	},
 
-	_setProject: function(project) {
-		if (this._project != project) {
-			var hasOnFrame = this.responds('frame');
-			if (hasOnFrame)
-				this._animateItem(false);
+	_setProject: function(project, installEvents) {
+		if (this._project !== project) {
+			// Uninstall events before switching project, then install them
+			// again.
+			if (this._project)
+				this._installEvents(false);
 			this._project = project;
-			if (hasOnFrame)
-				this._animateItem(true);
-			if (this._children) {
-				for (var i = 0, l = this._children.length; i < l; i++) {
-					this._children[i]._setProject(project);
-				}
-			}
+			var children = this._children;
+			for (var i = 0, l = children && children.length; i < l; i++)
+				children[i]._setProject(project);
+			// We need to call _installEvents(true) again, but merge it with
+			// handling of installEvents argument below.
+			installEvents = true;
 		}
+		if (installEvents)
+			this._installEvents(true);
+	},
+
+	/**
+	 * Overrides Callback#_installEvents to also call _installEvents on all
+	 * children.
+	 */
+	_installEvents: function _installEvents(install) {
+		_installEvents.base.call(this, install);
+		var children = this._children;
+		for (var i = 0, l = children && children.length; i < l; i++)
+			children[i]._installEvents(install);
 	},
 
 	/**
@@ -1515,11 +1566,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		}
 		// We only implement it here for items with rectangular content,
 		// for anything else we need to override #contains()
-		// TODO: There currently is no caching for the results of direct calls
-		// to this._getBounds('getBounds') (without the application of the
-		// internal matrix). Performance improvements could be achieved if
-		// these were cached too. See #_getCachedBounds().
-		return point.isInside(this._getBounds('getBounds'));
+		return point.isInside(this.getInternalBounds());
 	},
 
 	/**
@@ -1532,7 +1579,8 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 * in points. Can also be controlled through
 	 * {@link Project#options}{@code .hitTolerance}.
 	 * <b>options.type:</b> Only hit test again a certain item
-	 * type: {@link PathItem}, {@link Raster}, {@link TextItem}, etc.
+	 * type: {String('group', 'layer', 'path', 'compound-path', 'shape',
+	 * 'raster', 'placed-symbol', 'point-text')}, etc.
 	 * <b>options.fill:</b> {@code Boolean} – hit test the fill of items.
 	 * <b>options.stroke:</b> {@code Boolean} – hit test the curves of path
 	 * items, taking into account stroke width.
@@ -1574,9 +1622,13 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// Transform point to local coordinates but use untransformed point
 		// for bounds check above.
 		point = this._matrix._inverseTransform(point);
-
-		var that = this,
+		// Filter for type, guides and selected items if that's required.
+		var checkSelf = !(options.guides && !this._guide
+				|| options.selected && !this._selected
+				|| options.type && this._type !== options.type),
+			that = this,
 			res;
+
 		function checkBounds(type, part) {
 			var pt = bounds['get' + part]();
 			// TODO: We need to transform the point back to the coordinate
@@ -1586,12 +1638,11 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 						{ name: Base.hyphenate(part), point: pt });
 		}
 
-		if ((options.center || options.bounds) &&
-				// Ignore top level layers:
-				!(this instanceof Layer && !this._parent)) {
+		// Ignore top level layers by checking for _parent:
+		if (checkSelf && (options.center || options.bounds) && this._parent) {
 			// Don't get the transformed bounds, check against transformed
 			// points instead
-			var bounds = this._getBounds('getBounds');
+			var bounds = this.getInternalBounds();
 			if (options.center)
 				res = checkBounds('center', 'Center');
 			if (!res && options.bounds) {
@@ -1605,30 +1656,29 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			}
 		}
 
-		// TODO: Support option.type even for things like CompoundPath where
-		// children are matched but the parent is returned.
-
-		// Filter for guides or selected items if that's required
-		if ((res || (res = this._children || !(options.guides && !this._guide
-				|| options.selected && !this._selected)
-					? this._hitTest(point, options) : null))
-				&& res.point) {
-			// Transform the point back to the outer coordinate system.
-			res.point = that._matrix.transform(res.point);
+		var children = !res && this._children;
+		if (children) {
+			var opts = this._getChildHitTestOptions(options);
+			// Loop backwards, so items that get drawn last are tested first
+			for (var i = children.length - 1; i >= 0 && !res; i--)
+				res = children[i].hitTest(point, opts);
 		}
+		if (!res && checkSelf)
+			res = this._hitTest(point, options);
+		// Transform the point back to the outer coordinate system.
+		if (res && res.point)
+			res.point = that._matrix.transform(res.point);
 		return res;
 	},
 
+	_getChildHitTestOptions: function(options) {
+		return options;
+	},
+
 	_hitTest: function(point, options) {
-		var children = this._children;
-		if (children) {
-			// Loop backwards, so items that get drawn last are tested first
-			for (var i = children.length - 1, res; i >= 0; i--)
-				if (res = children[i].hitTest(point, options))
-					return res;
-		} else if (options.fill && this.hasFill() && this._contains(point)) {
+		// The default implementation honly handles 'fill' through #_contains()
+		if (options.fill && this.hasFill() && this._contains(point))
 			return new HitResult('fill', this);
-		}
 	},
 
 	// DOCS: Item#matches
@@ -1853,7 +1903,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 			for (var i = 0, l = items.length; i < l; i++) {
 				var item = items[i];
 				item._parent = this;
-				item._setProject(this._project);
+				item._setProject(this._project, true);
 				// Setting the name again makes sure all name lookup structures
 				// are kept in sync.
 				if (item._name)
@@ -2007,8 +2057,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 				this._removeNamed();
 			if (this._index != null)
 				Base.splice(this._parent._children, null, this._index, 1);
-			if (this.responds('frame'))
-				this._animateItem(false);
+			this._installEvents(false);
 			// Notify parent of changed hierarchy
 			if (notify)
 				this._parent._changed(/*#=*/ Change.HIERARCHY);
@@ -2643,12 +2692,14 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		// and transform the cached _bounds and _position without having to
 		// fully recalculate each time.
 		var decomp = bounds && matrix.decompose();
-		if (decomp && !decomp.shearing && decomp.angle % 90 === 0) {
+		if (decomp && !decomp.shearing && decomp.rotation % 90 === 0) {
 			// Transform the old bound by looping through all the cached bounds
 			// in _bounds and transform each.
 			for (var key in bounds) {
 				var rect = bounds[key];
-				matrix._transformBounds(rect, rect);
+				// See _getCachedBounds for an explanation of this:
+				if (!rect._internal)
+					matrix._transformBounds(rect, rect);
 			}
 			// If we have cached bounds, update _position again as its 
 			// center. We need to take into account _boundsGetter here too, in 
@@ -2705,6 +2756,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		}
 		if (!_dontNotify)
 			this._changed(/*#=*/ Change.GEOMETRY);
+		return this;
 	},
 
 	/**
@@ -2716,7 +2768,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 */
 	globalToLocal: function(/* point */) {
 		var matrix = this.getGlobalMatrix();
-		return matrix && matrix._transformPoint(Point.read(arguments));
+		return matrix && matrix._inverseTransform(Point.read(arguments));
 	},
 
 	/**
@@ -2728,7 +2780,7 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 	 */
 	localToGlobal: function(/* point */) {
 		var matrix = this.getGlobalMatrix();
-		return matrix && matrix._inverseTransform(Point.read(arguments));
+		return matrix && matrix._transformPoint(Point.read(arguments));
 	},
 
 	/**
@@ -3315,16 +3367,13 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		}
 	},
 
-	// TODO: Implement View into the drawing.
-	// TODO: Optimize temporary canvas drawing to ignore parts that are
-	// outside of the visible view.
 	draw: function(ctx, param) {
 		if (!this._visible || this._opacity === 0)
 			return;
-		// Each time the project gets drawn, it's _drawCount is increased.
-		// Keep the _drawCount of drawn items in sync, so we have an easy
+		// Each time the project gets drawn, it's _updateVersion is increased.
+		// Keep the _updateVersion of drawn items in sync, so we have an easy
 		// way to know for which selected items we need to draw selection info.
-		this._drawCount = this._project._drawCount;
+		var updateVersion = this._updateVersion = this._project._updateVersion;
 		// Keep calculating the current global matrix, by keeping a history
 		// and pushing / popping as we go along.
 		var trackTransforms = param.trackTransforms,
@@ -3338,8 +3387,12 @@ var Item = Base.extend(Callback, /** @lends Item# */{
 		if (!globalMatrix.isInvertible())
 			return;
 		// Only keep track of transformation if told so. See Project#draw()
-		if (trackTransforms)
+		if (trackTransforms) {
 			transforms.push(this._globalMatrix = globalMatrix);
+			// We also keep the cached _globalMatrix versioned.
+			globalMatrix._updateVersion = updateVersion;
+		}
+
 		// If the item has a blendMode or is defining an opacity, draw it on
 		// a temporary canvas first and composite the canvas afterwards.
 		// Paths with an opacity < 1 that both define a fillColor
